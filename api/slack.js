@@ -4,20 +4,32 @@ const { WebClient } = require("@slack/web-api");
 const client = new WebClient(process.env.SLACK_BOT_TOKEN);
 
 module.exports = async (req, res) => {
-  const body = req.body || {};
+  let body = req.body;
 
-  // ① URL確認用（SlackのVerification）
+  // Slack から body が「文字列」で来ることがあるのでパースする
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      console.error("Failed to parse body:", e, body);
+      return res.status(200).json({ ok: false });
+    }
+  }
+
+  body = body || {};
+  console.log("Slack request body:", JSON.stringify(body, null, 2));
+
+  // ① URL Verification
   if (body.type === "url_verification") {
     return res.status(200).send(body.challenge);
   }
 
-  // ② イベントのコールバック
+  // ② Event Callback
   if (body.type === "event_callback") {
     const event = body.event || {};
 
-    // app_mention（@メンション）だけ処理
     if (event.type === "app_mention") {
-      // まずすぐSlackにOKを返す（タイムアウト防止）
+      // まずすぐ Slack にOK返す（3秒タイムアウト防止）
       res.status(200).json({ ok: true });
 
       try {
@@ -32,6 +44,6 @@ module.exports = async (req, res) => {
     }
   }
 
-  // それ以外はとりあえずOKだけ返す
+  // それ以外
   return res.status(200).json({ ok: true });
 };

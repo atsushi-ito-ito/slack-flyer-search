@@ -1,7 +1,4 @@
-// api/slack.js
-// Slack の app_mention を受けて、キーワードを判定して返信する
-
-// ---------------- 台帳データ（Excelから移す部分） ----------------
+// -------------------- ダミー台帳（後で Excel と連携） --------------------
 const FLYERS = [
   {
     id: 1,
@@ -10,7 +7,7 @@ const FLYERS = [
     target: "ファミリー",
     layout: "3LDK",
     copy: "ZEH-M認定",
-    url: "https://yellkyushu-my.sharepoint.com/...（Excelのurl列）",
+    url: "https://example.com/1",
     updated: "2024_04",
   },
   {
@@ -20,73 +17,62 @@ const FLYERS = [
     target: "高所得者",
     layout: "2LDK",
     copy: "先着順",
-    url: "https://yellkyushu-my.sharepoint.com/...（Excelのurl列）",
+    url: "https://example.com/2",
     updated: "2024_06",
-  },
+  }
 ];
 
-// ================================================================
-// 本体
-// ================================================================
+// -------------------- メイン関数（Slackエンドポイント） --------------------
 module.exports = async (req, res) => {
   let body = req.body;
 
-  // body が文字列の時もある→パースする
+  // body が文字ならパース
   if (typeof body === "string") {
     try {
       body = JSON.parse(body);
-    } catch (e) {
-      console.error("Failed to parse body:", e, body);
+    } catch (err) {
+      console.error("JSON parse error:", err);
       return res.status(200).json({ ok: false });
     }
   }
 
-  body = body || {};
   console.log("Slack request body:", JSON.stringify(body, null, 2));
 
-  // URL Verification
+  // URL認証
   if (body.type === "url_verification") {
     return res.status(200).send(body.challenge);
   }
 
-  // Event Callback
+  // イベント受信
   if (body.type === "event_callback") {
     const event = body.event || {};
 
-    // bot のメッセージは無視
+    // Botメッセージは無視
     if (event.subtype === "bot_message") {
       return res.status(200).json({ ok: true });
     }
 
-    // app_mention（メンションされた）
+    // メンション受信
     if (event.type === "app_mention") {
-      // Slack 的にまず 200 を返す（3秒制限回避）
-      res.status(200).json({ ok: true });
-
-      // ---------------- ユーザー入力 ----------------
-      let text = event.text || "";
-      text = text.replace(/<@[^>]+>/g, "").trim();
+      let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
 
-      // ---------------- タグ判定 ----------------
       const matchedTags = detectTags(text);
-
-      // ---------------- 台帳フィルタ ----------------
       const hitFlyers = filterFlyersByTags(matchedTags);
 
-      // ---------------- 返信メッセージ作成 ----------------
-      let reply;
+      let reply = "";
 
       if (matchedTags.length === 0) {
         reply =
           "キーワードがうまく読み取れませんでした 🤔\n\n" +
-          "例えば：\n" +
+          "例えば、次のように話しかけてください 👇\n" +
           "・ポップなチラシを探して\n" +
           "・ファミリー向けのチラシを探して\n" +
           "・3LDKを訴求しているチラシを探して";
       } else if (hitFlyers.length === 0) {
         reply =
-          "次の条件で検索しましたが、該当するチラシはありませんでした。\n\n" +
+          "次の条件でチラシを探しましたが、該当する台帳がありませんでした。\n\n" +
+          "条件:\n" +
           matchedTags.map((t) => `・${t.jaLabel}`).join("\n");
       } else {
         const top = hitFlyers.slice(0, 3);
@@ -105,7 +91,7 @@ module.exports = async (req, res) => {
             .join("\n\n");
       }
 
-      // ---------------- Slack に返信 ----------------
+      // Slackに返信
       try {
         const response = await fetch("https://slack.com/api/chat.postMessage", {
           method: "POST",
@@ -119,64 +105,50 @@ module.exports = async (req, res) => {
           }),
         });
 
-        const result = await response.json();
-        console.log("Slack API response:", result);
-      } catch (e) {
-        console.error("Slack postMessage error:", e);
+        console.log("Slack API response:", await response.json());
+      } catch (err) {
+        console.error("Slack postMessage error:", err);
       }
+
+      return res.status(200).json({ ok: true });
     }
   }
 
   return res.status(200).json({ ok: true });
 };
 
-// ================================================================
-// タグ判定ロジック
-// ================================================================
+
+// -------------------- キーワード判定 --------------------
 function detectTags(text) {
   const rules = [
-    {
-      id: "pop",
-      jaLabel: "ポップな雰囲気のチラシ",
-      keywords: ["ポップ", "POP", "ポップ系"],
-    },
-    {
-      id: "family",
-      jaLabel: "ファミリー向けのチラシ",
-      keywords: ["ファミリー向け", "ファミリー", "家族"],
-    },
-    {
-      id: "3ldk",
-      jaLabel: "3LDKを訴求しているチラシ",
-      keywords: ["3LDK", "３ＬＤＫ", "3ldk"],
-    },
+    { id: "pop", jaLabel: "ポップな雰囲気のチラシ", keywords: ["ポップ", "POP", "ポップ系"] },
+    { id: "family", jaLabel: "ファミリー向けのチラシ", keywords: ["ファミリー", "家族"] },
+    { id: "3ldk", jaLabel: "3LDKを訴求しているチラシ", keywords: ["3LDK", "３ＬＤＫ", "3ldk"] },
   ];
 
   const lower = text.toLowerCase();
-
   return rules.filter((rule) =>
     rule.keywords.some((kw) => lower.includes(kw.toLowerCase()))
   );
 }
 
-// ================================================================
-// 台帳フィルタロジック
-// ================================================================
+
+// -------------------- 台帳フィルタ --------------------
 function filterFlyersByTags(tags) {
   if (!tags || tags.length === 0) return [];
 
-  return FLYERS.filter((row) => {
-    return tags.every((tag) => {
+  return FLYERS.filter((row) =>
+    tags.every((tag) => {
       switch (tag.id) {
         case "pop":
-          return row.style && row.style.includes("ポップ");
+          return row.style.includes("ポップ");
         case "family":
-          return row.target && row.target.includes("ファミリー");
+          return row.target.includes("ファミリー");
         case "3ldk":
-          return row.layout && row.layout.toUpperCase().includes("3LDK");
+          return row.layout.toUpperCase().includes("3LDK");
         default:
           return true;
       }
-    });
-  });
+    })
+  );
 }

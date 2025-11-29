@@ -4,5 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node api/slack.js"
+  },
+  "dependencies": {
+    "@slack/web-api": "^7.13.0"
   }
 }

@@ -1,49 +1,38 @@
-// api/slack.js
-const { WebClient } = require("@slack/web-api");
+import fetch from "node-fetch";
 
-const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-
-module.exports = async (req, res) => {
-  let body = req.body;
-
-  // Slack から body が「文字列」で来ることがあるのでパースする
-  if (typeof body === "string") {
-    try {
-      body = JSON.parse(body);
-    } catch (e) {
-      console.error("Failed to parse body:", e, body);
-      return res.status(200).json({ ok: false });
-    }
+export default async function handler(req, res) {
+  // Slack の challenge 認証
+  if (req.body.challenge) {
+    return res.status(200).json({ challenge: req.body.challenge });
   }
 
-  body = body || {};
-  console.log("Slack request body:", JSON.stringify(body, null, 2));
+  const event = req.body.event;
 
-  // ① URL Verification
-  if (body.type === "url_verification") {
-    return res.status(200).send(body.challenge);
+  // ボットのメッセージは無視
+  if (event?.subtype === "bot_message") {
+    return res.status(200).json({ ok: true });
   }
 
-  // ② Event Callback
-  if (body.type === "event_callback") {
-    const event = body.event || {};
+  // メンションされたときの返信
+  if (event.type === "app_mention") {
+  const text = "了解しました！";
 
-    if (event.type === "app_mention") {
-      // まずすぐ Slack にOK返す（3秒タイムアウト防止）
-      res.status(200).json({ ok: true });
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+    },
+    body: JSON.stringify({
+      channel: event.channel,
+      text: text,
+    }),
+  });
 
-      try {
-        await client.chat.postMessage({
-          channel: event.channel,
-          text: "テストです。チラシ検索Botが反応しました 👋",
-        });
-      } catch (e) {
-        console.error("Slack postMessage error:", e);
-      }
-      return;
-    }
-  }
+  const result = await response.json();
+  console.log("Slack API response:", result);
+}
 
-  // それ以外
-  return res.status(200).json({ ok: true });
-};
+
+  res.status(200).json({ ok: true });
+}

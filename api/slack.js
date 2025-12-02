@@ -1,4 +1,5 @@
 // -------------------- ダミー台帳（後で Excel と連携） --------------------
+// -------------------- 台帳（あとで Excel と対応させる） --------------------
 const FLYERS = [
   {
     id: 1,
@@ -9,6 +10,8 @@ const FLYERS = [
     copy: "ZEH-M認定",
     url: "https://example.com/1",
     updated: "2024_04",
+    // ★このチラシに紐づくキーワードを配列で持つ
+    keywords: ["ポップ", "ファミリー", "3LDK", "ZEH"],
   },
   {
     id: 2,
@@ -19,8 +22,11 @@ const FLYERS = [
     copy: "先着順",
     url: "https://example.com/2",
     updated: "2024_06",
-  }
+    keywords: ["高級感", "大人向け", "2LDK"],
+  },
+  // 以下、台帳の行ごとに keywords: [...] を追加していく
 ];
+
 
 // -------------------- メイン関数（Slackエンドポイント） --------------------
 module.exports = async (req, res) => {
@@ -57,12 +63,30 @@ module.exports = async (req, res) => {
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
 
+          // メンション受信
+    if (event.type === "app_mention") {
+      let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
+      console.log("User text:", text);
+
+      // ① ユーザー文からタグ判定
       const matchedTags = detectTags(text);
-      const hitFlyers = filterFlyersByTags(matchedTags);
+
+      // ② タグがある場合はタグ絞り込み、なければキーワード全文検索
+      let hitFlyers = [];
+      let matchedKeywords = [];
+
+      if (matchedTags.length > 0) {
+        hitFlyers = filterFlyersByTags(matchedTags);
+      } else {
+        hitFlyers = searchFlyersByKeywords(text);
+        matchedKeywords = collectMatchedKeywords(text);
+      }
 
       let reply = "";
 
-      if (matchedTags.length === 0) {
+      // ③ 返信メッセージ組み立て
+      if (matchedTags.length === 0 && matchedKeywords.length === 0) {
+        // タグもキーワードも取れなかった場合
         reply =
           "キーワードがうまく読み取れませんでした 🤔\n\n" +
           "例えば、次のように話しかけてください 👇\n" +
@@ -70,16 +94,28 @@ module.exports = async (req, res) => {
           "・ファミリー向けのチラシを探して\n" +
           "・3LDKを訴求しているチラシを探して";
       } else if (hitFlyers.length === 0) {
+        // 条件はあるが台帳にヒットしない場合
+        const condLines =
+          matchedTags.length > 0
+            ? matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
+            : matchedKeywords.map((k) => `・${k}`).join("\n");
+
         reply =
           "次の条件でチラシを探しましたが、該当する台帳がありませんでした。\n\n" +
           "条件:\n" +
-          matchedTags.map((t) => `・${t.jaLabel}`).join("\n");
+          condLines;
       } else {
+        // 実際に候補が見つかった場合
         const top = hitFlyers.slice(0, 3);
+
+        const condLines =
+          matchedTags.length > 0
+            ? matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
+            : matchedKeywords.map((k) => `・${k}`).join("\n");
 
         reply =
           "次の条件でチラシ候補を見つけました 🔍\n" +
-          matchedTags.map((t) => `・${t.jaLabel}`).join("\n") +
+          condLines +
           "\n\n候補一覧（最大3件）：\n" +
           top
             .map(
@@ -90,6 +126,29 @@ module.exports = async (req, res) => {
             )
             .join("\n\n");
       }
+
+      // Slackに返信（ここより下は今のままでOK）
+      try {
+        const response = await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+          },
+          body: JSON.stringify({
+            channel: event.channel,
+            text: reply,
+          }),
+        });
+
+        console.log("Slack API response:", await response.json());
+      } catch (err) {
+        console.error("Slack postMessage error:", err);
+      }
+
+      return res.status(200).json({ ok: true });
+    }
+
 
       // Slackに返信
       try {
@@ -130,6 +189,36 @@ function detectTags(text) {
   return rules.filter((rule) =>
     rule.keywords.some((kw) => lower.includes(kw.toLowerCase()))
   );
+}
+
+// -------------------- キーワード全文検索 --------------------
+function searchFlyersByKeywords(text) {
+  const lower = text.toLowerCase();
+
+  return FLYERS.filter((row) => {
+    if (!row.keywords || row.keywords.length === 0) return false;
+
+    // ユーザーの発言の中に、いずれかのキーワードが含まれていればヒット
+    return row.keywords.some((kw) =>
+      lower.includes(kw.toLowerCase())
+    );
+  });
+}
+
+// どんなキーワードでヒットしたか、表示用にまとめる
+function collectMatchedKeywords(text) {
+  const lower = text.toLowerCase();
+  const hitSet = new Set();
+
+  FLYERS.forEach((row) => {
+    (row.keywords || []).forEach((kw) => {
+      if (lower.includes(kw.toLowerCase())) {
+        hitSet.add(kw);
+      }
+    });
+  });
+
+  return Array.from(hitSet);
 }
 
 

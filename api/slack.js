@@ -1,31 +1,58 @@
-// -------------------- ダミー台帳（後で Excel と連携） --------------------
-// -------------------- 台帳（あとで Excel と対応させる） --------------------
-const FLYERS = [
-  {
-    id: 1,
-    propertyName: "ジェイグラン平和",
-    style: "ファミリー",
-    target: "ファミリー",
-    layout: "3LDK",
-    copy: "ZEH-M認定",
-    url: "https://example.com/1",
-    updated: "2024_04",
-    // ★このチラシに紐づくキーワードを配列で持つ
-    keywords: ["ポップ", "ファミリー", "3LDK", "ZEH"],
-  },
-  {
-    id: 2,
-    propertyName: "ジェイグラン平和",
-    style: "高級感",
-    target: "高所得者",
-    layout: "2LDK",
-    copy: "先着順",
-    url: "https://example.com/2",
-    updated: "2024_06",
-    keywords: ["高級感", "大人向け", "2LDK"],
-  },
-  // 以下、台帳の行ごとに keywords: [...] を追加していく
-];
+// -------------------- 台帳（Googleスプレッドシートから読み込み） --------------------
+
+// 最初は空。後でスプレッドシートから読み込んでここに入れる
+let FLYERS = [];
+
+/**
+ * Google スプレッドシート（Apps Script の Web API）から台帳を読み込む
+ * - Vercel の環境変数 SHEET_URL に Web アプリの URL を入れておく
+ * - 一度読み込んだら、メモリにキャッシュしておく（毎回取りに行かない）
+ */
+async function loadFlyersFromSheet() {
+  // すでに読み込み済みなら何もしない
+  if (FLYERS.length > 0) {
+    return;
+  }
+
+  try {
+    const endpoint = process.env.SHEET_URL;
+    if (!endpoint) {
+      console.error("SHEET_URL が環境変数に設定されていません");
+      return;
+    }
+
+    const res = await fetch(endpoint);
+    if (!res.ok) {
+      console.error("シート読み込みエラー:", res.status, await res.text());
+      return;
+    }
+
+    const json = await res.json();
+    // ここは Apps Script の返す JSON 形式に合わせて調整してください
+
+    // 例：{ rows: [ { propertyName: "...", style: "...", ... } ] } を想定
+    FLYERS = (json.rows || []).map((row, index) => ({
+      id: row.id || index + 1,
+      propertyName: row.propertyName || "",
+      style: row.style || "",
+      target: row.target || "",
+      layout: row.layout || "",
+      copy: row.copy || "",
+      url: row.url || "",
+      updated: row.updated || "",
+      // 「キーワード」列（カンマ区切り）を配列に変換
+      keywords: (row.keywords || "")
+        .split(/[、,，\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    }));
+
+    console.log("Loaded flyers from sheet:", FLYERS.length);
+  } catch (err) {
+    console.error("loadFlyersFromSheet error:", err);
+  }
+}
+
 
 
 // -------------------- メイン関数（Slackエンドポイント） --------------------
@@ -58,13 +85,12 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // メンション受信
-    if (event.type === "app_mention") {
-      let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
-      console.log("User text:", text);
 
           // メンション受信
     if (event.type === "app_mention") {
+      // ★最初に台帳を読み込む
+      await loadFlyersFromSheet();
+
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
 
@@ -174,7 +200,6 @@ module.exports = async (req, res) => {
   }
 
   return res.status(200).json({ ok: true });
-};
 
 
 // -------------------- キーワード判定 --------------------

@@ -1,65 +1,35 @@
-// -------------------- 台帳（Googleスプレッドシートから読み込み） --------------------
+// -------------------- ダミー台帳（あとでスプレッドシートと連携） --------------------
+const FLYERS = [
+  {
+    id: 1,
+    propertyName: "ジェイグラン平和",
+    style: "ファミリー",
+    target: "ファミリー",
+    layout: "3LDK",
+    copy: "ZEH-M認定",
+    url: "https://example.com/1",
+    updated: "2024_04",
+    keywords: ["ポップ", "ファミリー", "3LDK", "ZEH"],
+  },
+  {
+    id: 2,
+    propertyName: "ジェイグラン平和",
+    style: "高級感",
+    target: "高所得者",
+    layout: "2LDK",
+    copy: "先着順",
+    url: "https://example.com/2",
+    updated: "2024_06",
+    keywords: ["高級感", "大人向け", "2LDK"],
+  },
+  // TODO: 台帳の行ごとに同じ形で追加していく
+];
 
-// 最初は空。後でスプレッドシートから読み込んでここに入れる
-let FLYERS = [];
-
-/**
- * Google スプレッドシート（Apps Script の Web API）から台帳を読み込む
- * - Vercel の環境変数 SHEET_URL に Web アプリの URL を入れておく
- * - 一度読み込んだら、メモリにキャッシュしておく（毎回取りに行かない）
- */
-async function loadFlyersFromSheet() {
-  // すでに読み込み済みなら何もしない
-  if (FLYERS.length > 0) {
-    return;
-  }
-
-  try {
-    const endpoint = process.env.SHEET_URL;
-    if (!endpoint) {
-      console.error("SHEET_URL が環境変数に設定されていません");
-      return;
-    }
-
-    const res = await fetch(endpoint);
-    if (!res.ok) {
-      console.error("シート読み込みエラー:", res.status, await res.text());
-      return;
-    }
-
-    const json = await res.json();
-    // ここは Apps Script の返す JSON 形式に合わせて調整してください
-
-    // 例：{ rows: [ { propertyName: "...", style: "...", ... } ] } を想定
-    FLYERS = (json.rows || []).map((row, index) => ({
-      id: row.id || index + 1,
-      propertyName: row.propertyName || "",
-      style: row.style || "",
-      target: row.target || "",
-      layout: row.layout || "",
-      copy: row.copy || "",
-      url: row.url || "",
-      updated: row.updated || "",
-      // 「キーワード」列（カンマ区切り）を配列に変換
-      keywords: (row.keywords || "")
-        .split(/[、,，\s]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    }));
-
-    console.log("Loaded flyers from sheet:", FLYERS.length);
-  } catch (err) {
-    console.error("loadFlyersFromSheet error:", err);
-  }
-}
-
-
-
-// -------------------- メイン関数（Slackエンドポイント） --------------------
+// -------------------- メイン関数（Slack エンドポイント） --------------------
 module.exports = async (req, res) => {
   let body = req.body;
 
-  // body が文字ならパース
+  // body が文字列のときは JSON としてパース
   if (typeof body === "string") {
     try {
       body = JSON.parse(body);
@@ -69,50 +39,50 @@ module.exports = async (req, res) => {
     }
   }
 
+  body = body || {};
   console.log("Slack request body:", JSON.stringify(body, null, 2));
 
-  // URL認証
+  // 1) URL 認証
   if (body.type === "url_verification") {
     return res.status(200).send(body.challenge);
   }
 
-  // イベント受信
+  // 2) 通常イベント
   if (body.type === "event_callback") {
     const event = body.event || {};
 
-    // Botメッセージは無視
+    // Bot 自身のメッセージは無視
     if (event.subtype === "bot_message") {
       return res.status(200).json({ ok: true });
     }
 
-
-          // メンション受信
+    // メンションを受信したとき
     if (event.type === "app_mention") {
-      // ★最初に台帳を読み込む
-      await loadFlyersFromSheet();
-
+      // ------------- ユーザー文を整形 -------------
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
 
-      // ① ユーザー文からタグ判定
+      // ------------- ① タグ判定 -------------
       const matchedTags = detectTags(text);
 
-      // ② タグがある場合はタグ絞り込み、なければキーワード全文検索
+      // ------------- ② 探し方を決定 -------------
       let hitFlyers = [];
-      let matchedKeywords = [];
-
       if (matchedTags.length > 0) {
+        // タグが取れたとき → 台帳の style/target/layout でフィルタ
         hitFlyers = filterFlyersByTags(matchedTags);
       } else {
+        // タグが取れないとき → keyword 列の全文検索
         hitFlyers = searchFlyersByKeywords(text);
-        matchedKeywords = collectMatchedKeywords(text);
       }
 
+      // どのキーワードがヒットしたか（表示用）
+      const matchedKeywords = collectMatchedKeywords(text);
+
+      // ------------- ③ 返信メッセージを組み立て -------------
       let reply = "";
 
-      // ③ 返信メッセージ組み立て
       if (matchedTags.length === 0 && matchedKeywords.length === 0) {
-        // タグもキーワードも取れなかった場合
+        // まったく何も拾えなかったとき
         reply =
           "キーワードがうまく読み取れませんでした 🤔\n\n" +
           "例えば、次のように話しかけてください 👇\n" +
@@ -120,29 +90,41 @@ module.exports = async (req, res) => {
           "・ファミリー向けのチラシを探して\n" +
           "・3LDKを訴求しているチラシを探して";
       } else if (hitFlyers.length === 0) {
-        // 条件はあるが台帳にヒットしない場合
-        const condLines =
-          matchedTags.length > 0
-            ? matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
-            : matchedKeywords.map((k) => `・${k}`).join("\n");
+        // 条件は解釈できたが、台帳に該当行がない
+        reply = "次の条件でチラシを探しましたが、該当する台帳がありませんでした。\n\n";
 
-        reply =
-          "次の条件でチラシを探しましたが、該当する台帳がありませんでした。\n\n" +
-          "条件:\n" +
-          condLines;
+        if (matchedTags.length > 0) {
+          reply +=
+            "タグ条件:\n" +
+            matchedTags.map((t) => `・${t.jaLabel}`).join("\n") +
+            "\n\n";
+        }
+        if (matchedKeywords.length > 0) {
+          reply +=
+            "キーワード一致:\n" +
+            matchedKeywords.map((k) => `・${k}`).join("\n");
+        }
       } else {
-        // 実際に候補が見つかった場合
-        const top = hitFlyers.slice(0, 3);
+        // 候補が見つかったとき
+        const top = hitFlyers.slice(0, 3); // 最大3件
 
-        const condLines =
-          matchedTags.length > 0
-            ? matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
-            : matchedKeywords.map((k) => `・${k}`).join("\n");
+        reply = "次の条件でチラシ候補を見つけました 🔍\n";
 
-        reply =
-          "次の条件でチラシ候補を見つけました 🔍\n" +
-          condLines +
-          "\n\n候補一覧（最大3件）：\n" +
+        if (matchedTags.length > 0) {
+          reply +=
+            "タグ条件:\n" +
+            matchedTags.map((t) => `・${t.jaLabel}`).join("\n") +
+            "\n\n";
+        }
+        if (matchedKeywords.length > 0) {
+          reply +=
+            "キーワード一致:\n" +
+            matchedKeywords.map((k) => `・${k}`).join("\n") +
+            "\n\n";
+        }
+
+        reply +=
+          "候補一覧（最大3件）：\n" +
           top
             .map(
               (row, idx) =>
@@ -153,12 +135,12 @@ module.exports = async (req, res) => {
             .join("\n\n");
       }
 
-      // Slackに返信（ここより下は今のままでOK）
+      // ------------- ④ Slack に返信 -------------
       try {
         const response = await fetch("https://slack.com/api/chat.postMessage", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
             Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
           },
           body: JSON.stringify({
@@ -167,70 +149,65 @@ module.exports = async (req, res) => {
           }),
         });
 
-        console.log("Slack API response:", await response.json());
+        const result = await response.json();
+        console.log("Slack API response:", result);
       } catch (err) {
         console.error("Slack postMessage error:", err);
       }
 
-      return res.status(200).json({ ok: true });
-    }
-
-
-      // Slackに返信
-      try {
-        const response = await fetch("https://slack.com/api/chat.postMessage", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
-          },
-          body: JSON.stringify({
-            channel: event.channel,
-            text: reply,
-          }),
-        });
-
-        console.log("Slack API response:", await response.json());
-      } catch (err) {
-        console.error("Slack postMessage error:", err);
-      }
-
+      // Slack への HTTP レスポンス
       return res.status(200).json({ ok: true });
     }
   }
 
+  // それ以外のイベントは何もしない
   return res.status(200).json({ ok: true });
+};
 
-
-// -------------------- キーワード判定 --------------------
+// -------------------- タグ判定ロジック --------------------
 function detectTags(text) {
   const rules = [
-    { id: "pop", jaLabel: "ポップな雰囲気のチラシ", keywords: ["ポップ", "POP", "ポップ系"] },
-    { id: "family", jaLabel: "ファミリー向けのチラシ", keywords: ["ファミリー", "家族"] },
-    { id: "3ldk", jaLabel: "3LDKを訴求しているチラシ", keywords: ["3LDK", "３ＬＤＫ", "3ldk"] },
+    {
+      id: "pop",
+      jaLabel: "ポップな雰囲気のチラシ",
+      keywords: ["ポップ", "POP", "ポップ系"],
+    },
+    {
+      id: "family",
+      jaLabel: "ファミリー向けのチラシ",
+      keywords: ["ファミリー向け", "ファミリー", "家族"],
+    },
+    {
+      id: "3ldk",
+      jaLabel: "3LDKを訴求しているチラシ",
+      keywords: ["3LDK", "３ＬＤＫ", "3ldk"],
+    },
   ];
 
   const lower = text.toLowerCase();
-  return rules.filter((rule) =>
-    rule.keywords.some((kw) => lower.includes(kw.toLowerCase()))
-  );
+  const matched = [];
+
+  for (const rule of rules) {
+    const hit = rule.keywords.some((kw) =>
+      lower.includes(kw.toLowerCase())
+    );
+    if (hit) matched.push(rule);
+  }
+
+  return matched;
 }
 
-// -------------------- キーワード全文検索 --------------------
+// -------------------- keyword 列の全文検索 --------------------
 function searchFlyersByKeywords(text) {
   const lower = text.toLowerCase();
 
   return FLYERS.filter((row) => {
     if (!row.keywords || row.keywords.length === 0) return false;
-
-    // ユーザーの発言の中に、いずれかのキーワードが含まれていればヒット
-    return row.keywords.some((kw) =>
-      lower.includes(kw.toLowerCase())
-    );
+    return row.keywords.some((kw) => lower.includes(kw.toLowerCase()));
   });
 }
 
-// どんなキーワードでヒットしたか、表示用にまとめる
+// どのキーワードがヒットしたか（表示用）
 function collectMatchedKeywords(text) {
   const lower = text.toLowerCase();
   const hitSet = new Set();
@@ -246,8 +223,7 @@ function collectMatchedKeywords(text) {
   return Array.from(hitSet);
 }
 
-
-// -------------------- 台帳フィルタ --------------------
+// -------------------- タグによる台帳フィルタ --------------------
 function filterFlyersByTags(tags) {
   if (!tags || tags.length === 0) return [];
 
@@ -255,11 +231,11 @@ function filterFlyersByTags(tags) {
     tags.every((tag) => {
       switch (tag.id) {
         case "pop":
-          return row.style.includes("ポップ");
+          return row.style && row.style.includes("ポップ");
         case "family":
-          return row.target.includes("ファミリー");
+          return row.target && row.target.includes("ファミリー");
         case "3ldk":
-          return row.layout.toUpperCase().includes("3LDK");
+          return row.layout && row.layout.toUpperCase().includes("3LDK");
         default:
           return true;
       }

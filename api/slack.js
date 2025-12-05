@@ -1,22 +1,30 @@
+// api/slack.js
+
 const { google } = require("googleapis");
 
-// ★ここを追加
+// スプレッドシートから読み込んだ台帳をここに保持する
 let FLYERS = [];
 
-
+/**
+ * Google スプレッドシートから台帳データを読み込む
+ */
 async function loadSheetData() {
   try {
     const sheetUrl = process.env.SHEET_URL;
+    if (!sheetUrl) {
+      console.error("SHEET_URL is not set");
+      return [];
+    }
 
-    // スプレッドシートIDをURLから抽出
+    // URL から spreadsheetId を抽出
     const match = sheetUrl.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     if (!match) {
-      console.error("Invalid SHEET_URL");
+      console.error("Invalid SHEET_URL:", sheetUrl);
       return [];
     }
     const sheetId = match[1];
 
-    // サービスアカウント認証
+    // サービスアカウント JSON を環境変数から取得
     const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
     const auth = new google.auth.GoogleAuth({
@@ -26,19 +34,20 @@ async function loadSheetData() {
 
     const sheets = google.sheets({ version: "v4", auth });
 
-    // シート読み込み（1行目ヘッダー想定）
+    // ★シート名は一番左のシートを想定して "A1:Z1000" にしています
+    // もし名前付きシートを指定したい場合は "シート1!A1:Z1000" などに変更
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: "シート1!A1:Z1000", // ←台帳の範囲に合わせて調整
+      range: "A1:Z1000",
     });
 
     const rows = res.data.values;
-    if (!rows || rows.length === 0) return [];
+    if (!rows || rows.length === 0) {
+      console.log("Sheet has no rows");
+      return [];
+    }
 
-    // 1行目ヘッダー
     const headers = rows[0];
-
-    // データ行をオブジェクト化
     const list = rows.slice(1).map((row) => {
       const item = {};
       headers.forEach((h, i) => {
@@ -49,19 +58,16 @@ async function loadSheetData() {
 
     console.log("Loaded sheet rows:", list.length);
     return list;
-
   } catch (err) {
     console.error("Google Sheets Load Error:", err);
     return [];
   }
 }
 
-
-// -------------------- メイン関数（Slack エンドポイント） --------------------
+// -------------------- Slack エンドポイント --------------------
 module.exports = async (req, res) => {
   let body = req.body;
 
-  // body が文字列のときは JSON としてパース
   if (typeof body === "string") {
     try {
       body = JSON.parse(body);
@@ -74,12 +80,11 @@ module.exports = async (req, res) => {
   body = body || {};
   console.log("Slack request body:", JSON.stringify(body, null, 2));
 
-  // 1) URL 認証
+  // URL 認証
   if (body.type === "url_verification") {
     return res.status(200).send(body.challenge);
   }
 
-  // 2) 通常イベント
   if (body.type === "event_callback") {
     const event = body.event || {};
 
@@ -88,95 +93,71 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // メンションを受信したとき
+    // メンション受信
     if (event.type === "app_mention") {
-        const sheetRows = await loadSheetData();
+      // 1) スプレッドシートから最新の台帳を読み込み
+      const sheetRows = await loadSheetData();
 
-  // ★ここから追加
-  if (!sheetRows || sheetRows.length === 0) {
-    console.log("Sheet has no rows");
-    FLYERS = [];
-  } else {
-    FLYERS = sheetRows.map((row, i) => ({
-      id: i + 1,
-      propertyName: row["property_name"], // B列
-      style:        row["style"],         // C列 (値: "pop")
-      target:       row["target"],        // D列 (値: "ファミリー")
-      layout:       row["layout"],        // E列
-      copy:         row["copy"],          // F列
-      url:          row["url"],           // G列
-      updated:      row["updated"],       // H列
-      keywords: row["keyword"]           // I列 (例: "ファミリー, ZEH")
-        ? row["keyword"].split(",").map((s) => s.trim())
-        : [],
-    }));
+      if (!sheetRows || sheetRows.length === 0) {
+        console.log("Sheet rows empty, reply with guidance");
+        const reply =
+          "台帳が空のようです 🤔\n" +
+          "スプレッドシートに物件データを入力してから、もう一度試してください。";
 
-    console.log("FLYERS rows:", FLYERS.length);
-    console.log("FLYERS sample:", FLYERS[0]);
-  }
-  // ★ここまで追加
+        await postToSlack(event.channel, reply);
+        return res.status(200).json({ ok: true });
+      }
 
-      
-      
-          if (!sheetRows || sheetRows.length === 0) {
-      console.log("Sheet has no rows");
-      FLYERS = [];
-    } else {
-      // スプレッドシートのヘッダー名に合わせてマッピング
-      FLYERS = sheetRows.map((row, i) => ({
-        id: i + 1,
-        propertyName: row["物件名"],      // ←列名に合わせてください
-        style:        row["style"],
-        target:       row["target"],
-        layout:       row["layout"],
-        copy:         row["copy"],
-        url:          row["URL"],
-        updated:      row["更新日"],
-        // keyword 列は「ポップ,ファミリー,3LDK」などカンマ区切り想定
-        keywords: row["keyword"]
-          ? row["keyword"].split(",").map((s) => s.trim())
-          : [],
+      // 2) 台帳を FLYERS に反映（ヘッダー名に合わせてマッピング）
+      FLYERS = sheetRows.map((row, idx) => ({
+        id: row["id"] || String(idx + 1),
+        propertyName: row["property_name"] || "",
+        style: row["style"] || "",
+        target: row["target"] || "",
+        layout: row["layout"] || "",
+        copy: row["copy"] || "",
+        url: row["url"] || "",
+        updated: row["updated"] || "",
+        keywords: (row["keyword"] || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       }));
+      console.log("FLYERS loaded:", FLYERS.length);
+      console.log("FLYERS[0]:", FLYERS[0]);
 
-      console.log("FLYERS rows:", FLYERS.length);
-    }
-
-
-
-      // ------------- ユーザー文を整形 -------------
+      // 3) ユーザー発言を整形
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
 
-      // ------------- ① タグ判定 -------------
+      // 4) タグ判定 & キーワードマッチ
       const matchedTags = detectTags(text);
+      const matchedKeywords = collectMatchedKeywords(text);
 
-      // ------------- ② 探し方を決定 -------------
-let hitFlyers = [];
-let matchedKeywords = [];
+      let hitFlyers = [];
 
-// どのキーワードがヒットしたか（表示用）
-matchedKeywords = collectMatchedKeywords(text);
+      if (matchedTags.length > 0) {
+        hitFlyers = filterFlyersByTags(matchedTags);
+        console.log(
+          "filterFlyersByTags hits:",
+          hitFlyers.length,
+          "tags:",
+          matchedTags.map((t) => t.id)
+        );
 
-if (matchedTags.length > 0) {
-  // まずはタグ条件で絞り込み
-  hitFlyers = filterFlyersByTags(matchedTags);
+        if (hitFlyers.length === 0 && matchedKeywords.length > 0) {
+          hitFlyers = searchFlyersByKeywords(text);
+          console.log("fallback searchFlyersByKeywords hits:", hitFlyers.length);
+        }
+      } else {
+        hitFlyers = searchFlyersByKeywords(text);
+        console.log("searchFlyersByKeywords hits:", hitFlyers.length);
+      }
 
-  // タグでは0件だったが、キーワードにはヒットしている場合は
-  // 「キーワード全文検索」にフォールバック
-  if (hitFlyers.length === 0 && matchedKeywords.length > 0) {
-    hitFlyers = searchFlyersByKeywords(text);
-  }
-} else {
-  // タグが一つも取れない場合は、最初からキーワード全文検索
-  hitFlyers = searchFlyersByKeywords(text);
-}
-
-
-      // ------------- ③ 返信メッセージを組み立て -------------
+      // 5) 返信メッセージ生成
       let reply = "";
 
       if (matchedTags.length === 0 && matchedKeywords.length === 0) {
-        // まったく何も拾えなかったとき
         reply =
           "キーワードがうまく読み取れませんでした 🤔\n\n" +
           "例えば、次のように話しかけてください 👇\n" +
@@ -184,7 +165,6 @@ if (matchedTags.length > 0) {
           "・ファミリー向けのチラシを探して\n" +
           "・3LDKを訴求しているチラシを探して";
       } else if (hitFlyers.length === 0) {
-        // 条件は解釈できたが、台帳に該当行がない
         reply = "次の条件でチラシを探しましたが、該当する台帳がありませんでした。\n\n";
 
         if (matchedTags.length > 0) {
@@ -199,8 +179,7 @@ if (matchedTags.length > 0) {
             matchedKeywords.map((k) => `・${k}`).join("\n");
         }
       } else {
-        // 候補が見つかったとき
-        const top = hitFlyers.slice(0, 3); // 最大3件
+        const top = hitFlyers.slice(0, 3);
 
         reply = "次の条件でチラシ候補を見つけました 🔍\n";
 
@@ -229,36 +208,35 @@ if (matchedTags.length > 0) {
             .join("\n\n");
       }
 
-      // ------------- ④ Slack に返信 -------------
-      try {
-        const response = await fetch("https://slack.com/api/chat.postMessage", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json; charset=utf-8",
-            Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
-          },
-          body: JSON.stringify({
-            channel: event.channel,
-            text: reply,
-          }),
-        });
-
-        const result = await response.json();
-        console.log("Slack API response:", result);
-      } catch (err) {
-        console.error("Slack postMessage error:", err);
-      }
-
-      // Slack への HTTP レスポンス
+      await postToSlack(event.channel, reply);
       return res.status(200).json({ ok: true });
     }
   }
 
-  // それ以外のイベントは何もしない
   return res.status(200).json({ ok: true });
 };
 
-// -------------------- タグ判定ロジック --------------------
+/**
+ * Slack にメッセージを送信するヘルパー
+ */
+async function postToSlack(channel, text) {
+  try {
+    const resp = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+      },
+      body: JSON.stringify({ channel, text }),
+    });
+    const result = await resp.json();
+    console.log("Slack API response:", result);
+  } catch (err) {
+    console.error("Slack postMessage error:", err);
+  }
+}
+
+// -------------------- タグ判定 --------------------
 function detectTags(text) {
   const rules = [
     {
@@ -287,7 +265,6 @@ function detectTags(text) {
     );
     if (hit) matched.push(rule);
   }
-
   return matched;
 }
 
@@ -317,15 +294,15 @@ function collectMatchedKeywords(text) {
   return Array.from(hitSet);
 }
 
-// -------------------- タグによる台帳フィルタ --------------------
+// -------------------- タグによるフィルタ --------------------
 function filterFlyersByTags(tags) {
   if (!tags || tags.length === 0) return [];
 
-  return FLYERS.filter((row) =>
+  const filtered = FLYERS.filter((row) =>
     tags.every((tag) => {
       switch (tag.id) {
         case "pop":
-          // style が "pop" でも「ポップ」でもヒット
+          // style が "pop" でも「ポップ」でもヒットさせる
           return (
             row.style &&
             (row.style.includes("pop") || row.style.includes("ポップ"))
@@ -342,5 +319,13 @@ function filterFlyersByTags(tags) {
       }
     })
   );
-}
 
+  console.log(
+    "filterFlyersByTags: tags=",
+    tags.map((t) => t.id),
+    " -> ",
+    filtered.length,
+    "hits"
+  );
+  return filtered;
+}

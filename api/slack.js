@@ -1,29 +1,57 @@
-// -------------------- ダミー台帳（あとでスプレッドシートと連携） --------------------
-const FLYERS = [
-  {
-    id: 1,
-    propertyName: "ジェイグラン平和",
-    style: "ファミリー",
-    target: "ファミリー",
-    layout: "3LDK",
-    copy: "ZEH-M認定",
-    url: "https://example.com/1",
-    updated: "2024_04",
-    keywords: ["ポップ", "ファミリー", "3LDK", "ZEH"],
-  },
-  {
-    id: 2,
-    propertyName: "ジェイグラン平和",
-    style: "高級感",
-    target: "高所得者",
-    layout: "2LDK",
-    copy: "先着順",
-    url: "https://example.com/2",
-    updated: "2024_06",
-    keywords: ["高級感", "大人向け", "2LDK"],
-  },
-  // TODO: 台帳の行ごとに同じ形で追加していく
-];
+const { google } = require("googleapis");
+
+async function loadSheetData() {
+  try {
+    const sheetUrl = process.env.SHEET_URL;
+
+    // スプレッドシートIDをURLから抽出
+    const match = sheetUrl.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match) {
+      console.error("Invalid SHEET_URL");
+      return [];
+    }
+    const sheetId = match[1];
+
+    // サービスアカウント認証
+    const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+
+    const auth = new google.auth.GoogleAuth({
+      credentials: serviceAccount,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    });
+
+    const sheets = google.sheets({ version: "v4", auth });
+
+    // シート読み込み（1行目ヘッダー想定）
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: "シート1!A1:Z1000", // ←台帳の範囲に合わせて調整
+    });
+
+    const rows = res.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    // 1行目ヘッダー
+    const headers = rows[0];
+
+    // データ行をオブジェクト化
+    const list = rows.slice(1).map((row) => {
+      const item = {};
+      headers.forEach((h, i) => {
+        item[h] = row[i] || "";
+      });
+      return item;
+    });
+
+    console.log("Loaded sheet rows:", list.length);
+    return list;
+
+  } catch (err) {
+    console.error("Google Sheets Load Error:", err);
+    return [];
+  }
+}
+
 
 // -------------------- メイン関数（Slack エンドポイント） --------------------
 module.exports = async (req, res) => {
@@ -58,6 +86,19 @@ module.exports = async (req, res) => {
 
     // メンションを受信したとき
     if (event.type === "app_mention") {
+      const sheetRows = await loadSheetData();
+const FLYERS = sheetRows.map((row, i) => ({
+  id: i + 1,
+  propertyName: row["物件名"],
+  style: row["style"],
+  target: row["target"],
+  layout: row["layout"],
+  copy: row["copy"],
+  url: row["URL"],
+  updated: row["更新日"],
+  keywords: row["keyword"] ? row["keyword"].split(",") : [],
+}));
+
       // ------------- ユーザー文を整形 -------------
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
@@ -66,17 +107,26 @@ module.exports = async (req, res) => {
       const matchedTags = detectTags(text);
 
       // ------------- ② 探し方を決定 -------------
-      let hitFlyers = [];
-      if (matchedTags.length > 0) {
-        // タグが取れたとき → 台帳の style/target/layout でフィルタ
-        hitFlyers = filterFlyersByTags(matchedTags);
-      } else {
-        // タグが取れないとき → keyword 列の全文検索
-        hitFlyers = searchFlyersByKeywords(text);
-      }
+let hitFlyers = [];
+let matchedKeywords = [];
 
-      // どのキーワードがヒットしたか（表示用）
-      const matchedKeywords = collectMatchedKeywords(text);
+// どのキーワードがヒットしたか（表示用）
+matchedKeywords = collectMatchedKeywords(text);
+
+if (matchedTags.length > 0) {
+  // まずはタグ条件で絞り込み
+  hitFlyers = filterFlyersByTags(matchedTags);
+
+  // タグでは0件だったが、キーワードにはヒットしている場合は
+  // 「キーワード全文検索」にフォールバック
+  if (hitFlyers.length === 0 && matchedKeywords.length > 0) {
+    hitFlyers = searchFlyersByKeywords(text);
+  }
+} else {
+  // タグが一つも取れない場合は、最初からキーワード全文検索
+  hitFlyers = searchFlyersByKeywords(text);
+}
+
 
       // ------------- ③ 返信メッセージを組み立て -------------
       let reply = "";

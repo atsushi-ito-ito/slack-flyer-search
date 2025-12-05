@@ -299,11 +299,23 @@ function filterFlyersByTags(tags) {
     tags.every((tag) => {
       switch (tag.id) {
         case "pop":
-          return row.style && row.style.includes("ポップ");
+          // 「pop」でも「ポップ」でもヒットするように
+          return (
+            row.style &&
+            (row.style.includes("pop") ||
+             row.style.includes("ポップ"))
+          );
+
         case "family":
+          // target は「ファミリー」なので今のままでOK
           return row.target && row.target.includes("ファミリー");
+
         case "3ldk":
-          return row.layout && row.layout.toUpperCase().includes("3LDK");
+          return (
+            row.layout &&
+            row.layout.toUpperCase().includes("3LDK")
+          );
+
         default:
           return true;
       }

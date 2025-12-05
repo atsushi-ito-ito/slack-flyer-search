@@ -90,7 +90,33 @@ module.exports = async (req, res) => {
 
     // メンションを受信したとき
     if (event.type === "app_mention") {
-      const sheetRows = await loadSheetData();
+        const sheetRows = await loadSheetData();
+
+  // ★ここから追加
+  if (!sheetRows || sheetRows.length === 0) {
+    console.log("Sheet has no rows");
+    FLYERS = [];
+  } else {
+    FLYERS = sheetRows.map((row, i) => ({
+      id: i + 1,
+      propertyName: row["property_name"], // B列
+      style:        row["style"],         // C列 (値: "pop")
+      target:       row["target"],        // D列 (値: "ファミリー")
+      layout:       row["layout"],        // E列
+      copy:         row["copy"],          // F列
+      url:          row["url"],           // G列
+      updated:      row["updated"],       // H列
+      keywords: row["keyword"]           // I列 (例: "ファミリー, ZEH")
+        ? row["keyword"].split(",").map((s) => s.trim())
+        : [],
+    }));
+
+    console.log("FLYERS rows:", FLYERS.length);
+    console.log("FLYERS sample:", FLYERS[0]);
+  }
+  // ★ここまで追加
+
+      
       
           if (!sheetRows || sheetRows.length === 0) {
       console.log("Sheet has no rows");
@@ -299,26 +325,22 @@ function filterFlyersByTags(tags) {
     tags.every((tag) => {
       switch (tag.id) {
         case "pop":
-          // 「pop」でも「ポップ」でもヒットするように
+          // style が "pop" でも「ポップ」でもヒット
           return (
             row.style &&
-            (row.style.includes("pop") ||
-             row.style.includes("ポップ"))
+            (row.style.includes("pop") || row.style.includes("ポップ"))
           );
-
         case "family":
-          // target は「ファミリー」なので今のままでOK
           return row.target && row.target.includes("ファミリー");
-
         case "3ldk":
           return (
             row.layout &&
             row.layout.toUpperCase().includes("3LDK")
           );
-
         default:
           return true;
       }
     })
   );
 }
+

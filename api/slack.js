@@ -91,6 +91,30 @@ module.exports = async (req, res) => {
     // メンションを受信したとき
     if (event.type === "app_mention") {
       const sheetRows = await loadSheetData();
+      
+          if (!sheetRows || sheetRows.length === 0) {
+      console.log("Sheet has no rows");
+      FLYERS = [];
+    } else {
+      // スプレッドシートのヘッダー名に合わせてマッピング
+      FLYERS = sheetRows.map((row, i) => ({
+        id: i + 1,
+        propertyName: row["物件名"],      // ←列名に合わせてください
+        style:        row["style"],
+        target:       row["target"],
+        layout:       row["layout"],
+        copy:         row["copy"],
+        url:          row["URL"],
+        updated:      row["更新日"],
+        // keyword 列は「ポップ,ファミリー,3LDK」などカンマ区切り想定
+        keywords: row["keyword"]
+          ? row["keyword"].split(",").map((s) => s.trim())
+          : [],
+      }));
+
+      console.log("FLYERS rows:", FLYERS.length);
+    }
+
 
 
       // ------------- ユーザー文を整形 -------------

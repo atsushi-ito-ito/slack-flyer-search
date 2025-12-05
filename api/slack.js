@@ -3,7 +3,6 @@ const { google } = require("googleapis");
 // ★ここを追加
 let FLYERS = [];
 
-const { google } = require("googleapis");
 
 async function loadSheetData() {
   try {

@@ -1,5 +1,10 @@
 const { google } = require("googleapis");
 
+// ★ここを追加
+let FLYERS = [];
+
+const { google } = require("googleapis");
+
 async function loadSheetData() {
   try {
     const sheetUrl = process.env.SHEET_URL;
@@ -87,17 +92,7 @@ module.exports = async (req, res) => {
     // メンションを受信したとき
     if (event.type === "app_mention") {
       const sheetRows = await loadSheetData();
-const FLYERS = sheetRows.map((row, i) => ({
-  id: i + 1,
-  propertyName: row["物件名"],
-  style: row["style"],
-  target: row["target"],
-  layout: row["layout"],
-  copy: row["copy"],
-  url: row["URL"],
-  updated: row["更新日"],
-  keywords: row["keyword"] ? row["keyword"].split(",") : [],
-}));
+
 
       // ------------- ユーザー文を整形 -------------
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();

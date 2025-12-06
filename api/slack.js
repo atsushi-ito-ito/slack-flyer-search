@@ -97,6 +97,27 @@ module.exports = async (req, res) => {
     if (event.type === "app_mention") {
       // 1) スプレッドシートから最新の台帳を読み込み
       const sheetRows = await loadSheetData();
+      // ★ここを追加：シートの行データを FLYERS に反映
+  FLYERS = (sheetRows || []).map((row, i) => ({
+    id: Number(row["id"] || i + 1),
+    propertyName: row["property_name"] || "",   // B列
+    style: row["style"] || "",                  // C列
+    target: row["target"] || "",                // D列
+    layout: row["layout"] || "",                // E列
+    copy: row["copy"] || "",                    // F列
+    url: row["url"] || row["URL"] || "",        // G列
+    updated: row["updated"] || "",              // H列
+    // I列 keyword を配列に変換（カンマ区切り）
+    keywords: row["keyword"]
+      ? String(row["keyword"])
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [],
+  }));
+
+  console.log("FLYERS length:", FLYERS.length);
+  // ここから下は今まで通り（ユーザー文の整形〜タグ判定…）
 
       if (!sheetRows || sheetRows.length === 0) {
         console.log("Sheet rows empty, reply with guidance");

@@ -199,9 +199,10 @@ module.exports = async (req, res) => {
             "キーワード一致:\n" +
             matchedKeywords.map((k) => `・${k}`).join("\n");
         }
-      } else {
+            } else {
         const top = hitFlyers.slice(0, 3);
 
+        // ① テキスト版（フォールバック用）
         reply = "次の条件でチラシ候補を見つけました 🔍\n";
 
         if (matchedTags.length > 0) {
@@ -227,7 +228,84 @@ module.exports = async (req, res) => {
                 `   ${row.url}`
             )
             .join("\n\n");
+
+        // ② Block Kit 版（リッチなカードUI）
+        const conditionLines = [];
+        if (matchedTags.length > 0) {
+          conditionLines.push(
+            "*タグ条件:*\n" +
+              matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
+          );
+        }
+        if (matchedKeywords.length > 0) {
+          conditionLines.push(
+            "*キーワード一致:*\n" +
+              matchedKeywords.map((k) => `・${k}`).join("\n")
+          );
+        }
+
+        const blocks = [];
+
+        // ヘッダー
+        blocks.push({
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: "チラシ候補 🔍",
+          },
+        });
+
+        // 条件表示（タグ・キーワード）
+        if (conditionLines.length > 0) {
+          blocks.push({
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: conditionLines.join("\n\n"),
+            },
+          });
+        }
+
+        blocks.push({ type: "divider" });
+
+        // 各候補をカード風に
+        top.forEach((row, idx) => {
+          const title =
+            (row.propertyName || "(物件名未設定)") +
+            (row.layout ? ` / ${row.layout}` : "");
+          const desc = row.copy || "";
+
+          const section = {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text:
+                `*${idx + 1}. ${title}*\n` +
+                (desc ? `${desc}` : ""),
+            },
+          };
+
+          // URL がある場合だけ「PDFを開く」ボタンを付ける
+          if (row.url) {
+            section.accessory = {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "PDFを開く",
+              },
+              url: row.url,
+            };
+          }
+
+          blocks.push(section);
+          if (idx < top.length - 1) {
+            blocks.push({ type: "divider" });
+          }
+        });
+
+        await postToSlack(event.channel, reply, blocks);
       }
+
 
       await postToSlack(event.channel, reply);
       return res.status(200).json({ ok: true });
@@ -240,15 +318,30 @@ module.exports = async (req, res) => {
 /**
  * Slack にメッセージを送信するヘルパー
  */
-async function postToSlack(channel, text) {
+/**
+ * Slack にメッセージを送信するヘルパー
+ * text はフォールバック用、blocks があればカードUIで表示
+ */
+/**
+ * Slack にメッセージを送信するヘルパー
+ * text はフォールバック用、blocks があればカードUIで表示
+ */
+async function postToSlack(channel, text, blocks) {
   try {
+    const payload = { channel, text };
+
+    // Block Kit（カードUI）が指定されている場合は blocks を付ける
+    if (blocks && Array.isArray(blocks) && blocks.length > 0) {
+      payload.blocks = blocks;
+    }
+
     const resp = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
       },
-      body: JSON.stringify({ channel, text }),
+      body: JSON.stringify(payload),
     });
     const result = await resp.json();
     console.log("Slack API response:", result);
@@ -256,6 +349,8 @@ async function postToSlack(channel, text) {
     console.error("Slack postMessage error:", err);
   }
 }
+
+
 
 // -------------------- タグ判定 --------------------
 function detectTags(text) {

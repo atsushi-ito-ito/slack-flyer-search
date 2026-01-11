@@ -1,5 +1,4 @@
 // api/slack.js
-
 const { google } = require("googleapis");
 
 // スプレッドシートから読み込んだ台帳をここに保持する
@@ -97,28 +96,6 @@ module.exports = async (req, res) => {
     if (event.type === "app_mention") {
       // 1) スプレッドシートから最新の台帳を読み込み
       const sheetRows = await loadSheetData();
-      // 2) 台帳を FLYERS に反映（ヘッダー名に合わせてマッピング）
-FLYERS = sheetRows.map((row) => ({
-  // id は削除
-  area: row["地域区分"] || "",
-  propertyName: row["property_name"] || "",
-  developer: row["developer"] || "",   // ★追加
-  fileName: row["file_name"] || "",   // ★追加（M列）
-  style: row["style"] || "",
-  target: row["target"] || "",
-  layout: row["layout"] || "",
-  url: row["url"] || row["URL"] || "",
-  updated: row["updated"] || "",
-  keywords: (row["keyword"] || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
-}));
-
-
-
-  console.log("FLYERS length:", FLYERS.length);
-  // ここから下は今まで通り（ユーザー文の整形〜タグ判定…）
 
       if (!sheetRows || sheetRows.length === 0) {
         console.log("Sheet rows empty, reply with guidance");
@@ -131,19 +108,27 @@ FLYERS = sheetRows.map((row) => ({
       }
 
       // 2) 台帳を FLYERS に反映（ヘッダー名に合わせてマッピング）
-      FLYERS = sheetRows.map((row, idx) => ({
-        id: row["id"] || String(idx + 1),
+      // ✅ id は廃止
+      // ✅ copy は廃止
+      // ✅ area / developer / file_name を追加
+      FLYERS = sheetRows.map((row) => ({
+        area: row["area"] || "", // A列: 地域区分
+        prefectures: row["prefectures"] || "",         // ★追加
+  　　　　municipalities: row["municipalities"] || "",   // ★追加
         propertyName: row["property_name"] || "",
+        developer: row["developer"] || "",
+        fileName: row["file_name"] || "", // M列: file_name（コード内は fileName）
         style: row["style"] || "",
         target: row["target"] || "",
-        layout: row["layout"] || "",
-        url: row["url"] || "",
+        layout: row["layout"] || "", // layout を残す場合
+        url: row["url"] || row["URL"] || "",
         updated: row["updated"] || "",
         keywords: (row["keyword"] || "")
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
       }));
+
       console.log("FLYERS loaded:", FLYERS.length);
       console.log("FLYERS[0]:", FLYERS[0]);
 
@@ -151,7 +136,7 @@ FLYERS = sheetRows.map((row) => ({
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();
       console.log("User text:", text);
 
-      // 4) タグ判定 & キーワードマッチ
+      // 4) タグ判定 & キーワードマッチ（※matchedKeywords は keyword 配列からのみ拾う）
       const matchedTags = detectTags(text);
       const matchedKeywords = collectMatchedKeywords(text);
 
@@ -166,7 +151,8 @@ FLYERS = sheetRows.map((row) => ({
           matchedTags.map((t) => t.id)
         );
 
-        if (hitFlyers.length === 0 && matchedKeywords.length > 0) {
+        // タグで0件なら全文検索にフォールバック
+        if (hitFlyers.length === 0) {
           hitFlyers = searchFlyersByKeywords(text);
           console.log("fallback searchFlyersByKeywords hits:", hitFlyers.length);
         }
@@ -178,137 +164,137 @@ FLYERS = sheetRows.map((row) => ({
       // 5) 返信メッセージ生成
       let reply = "";
 
-      if (matchedTags.length === 0 && matchedKeywords.length === 0) {
+      // ✅ 「タグもkeyword一致もない」場合でも、全文検索でヒットしていれば案内ではなく結果を返す
+      if (hitFlyers.length === 0) {
+        // 何もヒットしないときだけ案内
         reply =
-          "キーワードがうまく読み取れませんでした 🤔\n\n" +
+          "該当するチラシが見つかりませんでした 🤔\n\n" +
           "例えば、次のように話しかけてください 👇\n" +
           "・ポップなチラシを探して\n" +
           "・ファミリー向けのチラシを探して\n" +
-          "・3LDKを訴求しているチラシを探して";
-      } else if (hitFlyers.length === 0) {
-        reply = "次の条件でチラシを探しましたが、該当する台帳がありませんでした。\n\n";
+          "・3LDKを訴求しているチラシを探して\n" +
+          "・野村不動産のチラシを探して\n" +
+          "・（物件名） のチラシを探して";
 
-        if (matchedTags.length > 0) {
-          reply +=
-            "タグ条件:\n" +
-            matchedTags.map((t) => `・${t.jaLabel}`).join("\n") +
-            "\n\n";
-        }
-        if (matchedKeywords.length > 0) {
-          reply +=
-            "キーワード一致:\n" +
-            matchedKeywords.map((k) => `・${k}`).join("\n");
-        }
-            } else {
-        const top = hitFlyers.slice(0, 3);
-
-        // ① テキスト版（フォールバック用）
-        reply = "次の条件でチラシ候補を見つけました 🔍\n";
-
-        if (matchedTags.length > 0) {
-          reply +=
-            "タグ条件:\n" +
-            matchedTags.map((t) => `・${t.jaLabel}`).join("\n") +
-            "\n\n";
-        }
-        if (matchedKeywords.length > 0) {
-          reply +=
-            "キーワード一致:\n" +
-            matchedKeywords.map((k) => `・${k}`).join("\n") +
-            "\n\n";
-        }
-
-        reply +=
-          "候補一覧（最大3件）：\n" +
-          top
-            .map(
-              (row, idx) =>
-                `${idx + 1}. ${row.propertyName} / ${row.layout}\n` +
-                `   ${row.url}`
-            )
-            .join("\n\n");
-
-        // ② Block Kit 版（リッチなカードUI）
-        const conditionLines = [];
-        if (matchedTags.length > 0) {
-          conditionLines.push(
-            "*タグ条件:*\n" +
-              matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
-          );
-        }
-        if (matchedKeywords.length > 0) {
-          conditionLines.push(
-            "*キーワード一致:*\n" +
-              matchedKeywords.map((k) => `・${k}`).join("\n")
-          );
-        }
-
-        const blocks = [];
-
-        // ヘッダー
-        blocks.push({
-          type: "header",
-          text: {
-            type: "plain_text",
-            text: "チラシ候補 🔍",
-          },
-        });
-
-        // 条件表示（タグ・キーワード）
-        if (conditionLines.length > 0) {
-          blocks.push({
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: conditionLines.join("\n\n"),
-            },
-          });
-        }
-
-        blocks.push({ type: "divider" });
-
-        // 各候補をカード風に
-        top.forEach((row, idx) => {
-          const title =
-            (row.propertyName || "(物件名未設定)") +
-            (row.layout ? ` / ${row.layout}` : "");
-          const desc =
-  row.fileName ? `📄 ${row.fileName}` : "";
-
-
-          const section = {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text:
-                `*${idx + 1}. ${title}*\n` +
-                (desc ? `${desc}` : ""),
-            },
-          };
-
-          // URL がある場合だけ「PDFを開く」ボタンを付ける
-          if (row.url) {
-            section.accessory = {
-              type: "button",
-              text: {
-                type: "plain_text",
-                text: "PDFを開く",
-              },
-              url: row.url,
-            };
-          }
-
-          blocks.push(section);
-          if (idx < top.length - 1) {
-            blocks.push({ type: "divider" });
-          }
-        });
-
-        await postToSlack(event.channel, reply, blocks);
+        await postToSlack(event.channel, reply);
+        return res.status(200).json({ ok: true });
       }
 
+      const top = hitFlyers.slice(0, 3);
 
-      await postToSlack(event.channel, reply);
+      // ① テキスト版（フォールバック用）
+      reply = "次の条件でチラシ候補を見つけました 🔍\n";
+
+      if (matchedTags.length > 0) {
+        reply +=
+          "タグ条件:\n" +
+          matchedTags.map((t) => `・${t.jaLabel}`).join("\n") +
+          "\n\n";
+      }
+      if (matchedKeywords.length > 0) {
+        reply +=
+          "キーワード一致:\n" +
+          matchedKeywords.map((k) => `・${k}`).join("\n") +
+          "\n\n";
+      }
+
+      reply +=
+        "候補一覧（最大3件）：\n" +
+        top
+          .map((row, idx) => {
+            const titleParts = [];
+            if (row.area) titleParts.push(row.area);
+            if (row.propertyName) titleParts.push(row.propertyName);
+            const title = titleParts.join(" / ") || "(物件名未設定)";
+
+            const subParts = [];
+            if (row.developer) subParts.push(`事業主:${row.developer}`);
+            if (row.layout) subParts.push(row.layout);
+            if (row.fileName) subParts.push(row.fileName);
+
+            const sub = subParts.length ? `   ${subParts.join(" / ")}\n` : "";
+
+            return `${idx + 1}. ${title}\n${sub}   ${row.url || ""}`.trimEnd();
+          })
+          .join("\n\n");
+
+      // ② Block Kit 版（リッチなカードUI）
+      const conditionLines = [];
+      if (matchedTags.length > 0) {
+        conditionLines.push(
+          "*タグ条件:*\n" + matchedTags.map((t) => `・${t.jaLabel}`).join("\n")
+        );
+      }
+      if (matchedKeywords.length > 0) {
+        conditionLines.push(
+          "*キーワード一致:*\n" + matchedKeywords.map((k) => `・${k}`).join("\n")
+        );
+      }
+
+      const blocks = [];
+
+      // ヘッダー
+      blocks.push({
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "チラシ候補 🔍",
+        },
+      });
+
+      // 条件表示（タグ・キーワード）
+      if (conditionLines.length > 0) {
+        blocks.push({
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: conditionLines.join("\n\n"),
+          },
+        });
+      }
+
+      blocks.push({ type: "divider" });
+
+      // 各候補をカード風に
+      top.forEach((row, idx) => {
+        const titleParts = [];
+        if (row.area) titleParts.push(row.area);
+        titleParts.push(row.propertyName || "(物件名未設定)");
+        const title = titleParts.join(" / ");
+
+        const metaParts = [];
+        if (row.developer) metaParts.push(`*事業主:* ${row.developer}`);
+        if (row.layout) metaParts.push(`*間取り:* ${row.layout}`);
+        if (row.fileName) metaParts.push(`*ファイル:* ${row.fileName}`);
+
+        const section = {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `*${idx + 1}. ${title}*\n${metaParts.join("\n")}`,
+          },
+        };
+
+        // URL がある場合だけ「PDFを開く」ボタンを付ける
+        if (row.url) {
+          section.accessory = {
+            type: "button",
+            text: {
+              type: "plain_text",
+              text: "PDFを開く",
+            },
+            url: row.url,
+          };
+        }
+
+        blocks.push(section);
+        if (idx < top.length - 1) {
+          blocks.push({ type: "divider" });
+        }
+      });
+
+      // ✅ 二重投稿防止：blocks 付きで1回だけ送る
+      await postToSlack(event.channel, reply, blocks);
       return res.status(200).json({ ok: true });
     }
   }
@@ -316,13 +302,6 @@ FLYERS = sheetRows.map((row) => ({
   return res.status(200).json({ ok: true });
 };
 
-/**
- * Slack にメッセージを送信するヘルパー
- */
-/**
- * Slack にメッセージを送信するヘルパー
- * text はフォールバック用、blocks があればカードUIで表示
- */
 /**
  * Slack にメッセージを送信するヘルパー
  * text はフォールバック用、blocks があればカードUIで表示
@@ -351,8 +330,6 @@ async function postToSlack(channel, text, blocks) {
   }
 }
 
-
-
 // -------------------- タグ判定 --------------------
 function detectTags(text) {
   const rules = [
@@ -373,45 +350,64 @@ function detectTags(text) {
     },
   ];
 
-  const lower = text.toLowerCase();
+  const lower = (text || "").toLowerCase();
   const matched = [];
 
   for (const rule of rules) {
-    const hit = rule.keywords.some((kw) =>
-      lower.includes(kw.toLowerCase())
-    );
+    const hit = rule.keywords.some((kw) => lower.includes(kw.toLowerCase()));
     if (hit) matched.push(rule);
   }
   return matched;
 }
 
-// -------------------- keyword 列の全文検索 --------------------
+// -------------------- 全文検索（keyword + developer等） --------------------
 function searchFlyersByKeywords(text) {
-  const lower = text.toLowerCase();
+  const q = (text || "").toLowerCase();
+  if (!q) return [];
 
   return FLYERS.filter((row) => {
-    const hitsKeyword =
-      row.keywords && row.keywords.some((kw) => lower.includes(kw.toLowerCase()));
+    const keywords = Array.isArray(row.keywords) ? row.keywords : [];
 
-    const hitsDeveloper =
-      row.developer && lower.includes(row.developer.toLowerCase());
+    const hitKeyword = keywords.some((kw) =>
+      q.includes(String(kw).toLowerCase())
+    );
 
-    const hitsProperty =
-      row.propertyName && lower.includes(row.propertyName.toLowerCase());
+    const hitDeveloper =
+      row.developer && q.includes(String(row.developer).toLowerCase());
+    const hitProperty =
+      row.propertyName && q.includes(String(row.propertyName).toLowerCase());
+    const hitArea = row.area && q.includes(String(row.area).toLowerCase());
+    // ★追加：都道府県 / 市区町村
+    const hitPref = row.prefectures && q.includes(String(row.prefectures).toLowerCase());
+    const hitMuni = row.municipalities && q.includes(String(row.municipalities).toLowerCase());
+    const hitFileName =
+      row.fileName && q.includes(String(row.fileName).toLowerCase());
 
-    return hitsKeyword || hitsDeveloper || hitsProperty;
+    // おまけ：style/target でもヒットさせたい場合
+    const hitStyle = row.style && q.includes(String(row.style).toLowerCase());
+    const hitTarget =
+      row.target && q.includes(String(row.target).toLowerCase());
+
+    return (
+      hitKeyword ||
+      hitDeveloper ||
+      hitProperty ||
+      hitArea ||
+      hitFileName ||
+      hitStyle ||
+      hitTarget
+    );
   });
 }
 
-
-// どのキーワードがヒットしたか（表示用）
+// どのキーワードがヒットしたか（表示用）※keyword列のみ
 function collectMatchedKeywords(text) {
-  const lower = text.toLowerCase();
+  const lower = (text || "").toLowerCase();
   const hitSet = new Set();
 
   FLYERS.forEach((row) => {
     (row.keywords || []).forEach((kw) => {
-      if (lower.includes(kw.toLowerCase())) {
+      if (lower.includes(String(kw).toLowerCase())) {
         hitSet.add(kw);
       }
     });
@@ -436,9 +432,11 @@ function filterFlyersByTags(tags) {
         case "family":
           return row.target && row.target.includes("ファミリー");
         case "3ldk":
+          // layout がある場合は layout、なければ keywords からも拾える
+          if (row.layout && row.layout.toUpperCase().includes("3LDK")) return true;
           return (
-            row.layout &&
-            row.layout.toUpperCase().includes("3LDK")
+            row.keywords &&
+            row.keywords.some((kw) => String(kw).toUpperCase().includes("3LDK"))
           );
         default:
           return true;
@@ -455,9 +453,3 @@ function filterFlyersByTags(tags) {
   );
   return filtered;
 }
-/* 
-git add api/slack.js
-git commit -m "Fix slack body parsing and reply"
-git push
-
-*/

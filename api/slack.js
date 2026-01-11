@@ -97,24 +97,25 @@ module.exports = async (req, res) => {
     if (event.type === "app_mention") {
       // 1) スプレッドシートから最新の台帳を読み込み
       const sheetRows = await loadSheetData();
-      // ★ここを追加：シートの行データを FLYERS に反映
-  FLYERS = (sheetRows || []).map((row, i) => ({
-    id: Number(row["id"] || i + 1),
-    propertyName: row["property_name"] || "",   // B列
-    style: row["style"] || "",                  // C列
-    target: row["target"] || "",                // D列
-    layout: row["layout"] || "",                // E列
-    copy: row["copy"] || "",                    // F列
-    url: row["url"] || row["URL"] || "",        // G列
-    updated: row["updated"] || "",              // H列
-    // I列 keyword を配列に変換（カンマ区切り）
-    keywords: row["keyword"]
-      ? String(row["keyword"])
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : [],
-  }));
+      // 2) 台帳を FLYERS に反映（ヘッダー名に合わせてマッピング）
+FLYERS = sheetRows.map((row) => ({
+  // id は削除
+  area: row["地域区分"] || "",
+  propertyName: row["property_name"] || "",
+  developer: row["developer"] || "",   // ★追加
+  fileName: row["file_name"] || "",   // ★追加（M列）
+  style: row["style"] || "",
+  target: row["target"] || "",
+  layout: row["layout"] || "",
+  url: row["url"] || row["URL"] || "",
+  updated: row["updated"] || "",
+  keywords: (row["keyword"] || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+}));
+
+
 
   console.log("FLYERS length:", FLYERS.length);
   // ここから下は今まで通り（ユーザー文の整形〜タグ判定…）
@@ -136,7 +137,6 @@ module.exports = async (req, res) => {
         style: row["style"] || "",
         target: row["target"] || "",
         layout: row["layout"] || "",
-        copy: row["copy"] || "",
         url: row["url"] || "",
         updated: row["updated"] || "",
         keywords: (row["keyword"] || "")
@@ -224,7 +224,6 @@ module.exports = async (req, res) => {
             .map(
               (row, idx) =>
                 `${idx + 1}. ${row.propertyName} / ${row.layout}\n` +
-                `   ${row.copy || ""}\n` +
                 `   ${row.url}`
             )
             .join("\n\n");
@@ -273,7 +272,9 @@ module.exports = async (req, res) => {
           const title =
             (row.propertyName || "(物件名未設定)") +
             (row.layout ? ` / ${row.layout}` : "");
-          const desc = row.copy || "";
+          const desc =
+  row.fileName ? `📄 ${row.fileName}` : "";
+
 
           const section = {
             type: "section",
@@ -389,10 +390,19 @@ function searchFlyersByKeywords(text) {
   const lower = text.toLowerCase();
 
   return FLYERS.filter((row) => {
-    if (!row.keywords || row.keywords.length === 0) return false;
-    return row.keywords.some((kw) => lower.includes(kw.toLowerCase()));
+    const hitsKeyword =
+      row.keywords && row.keywords.some((kw) => lower.includes(kw.toLowerCase()));
+
+    const hitsDeveloper =
+      row.developer && lower.includes(row.developer.toLowerCase());
+
+    const hitsProperty =
+      row.propertyName && lower.includes(row.propertyName.toLowerCase());
+
+    return hitsKeyword || hitsDeveloper || hitsProperty;
   });
 }
+
 
 // どのキーワードがヒットしたか（表示用）
 function collectMatchedKeywords(text) {

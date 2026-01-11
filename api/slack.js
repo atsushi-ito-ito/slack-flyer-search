@@ -263,41 +263,58 @@ module.exports = async (req, res) => {
 
       // 各候補をカード風に
       top.forEach((row, idx) => {
-        const titleParts = [];
-        if (row.area) titleParts.push(row.area);
-        titleParts.push(row.propertyName || "(物件名未設定)");
-        const title = titleParts.join(" / ");
+  // 1行目：都道府県 / 市区町村
+  const locationLine = [row.prefectures, row.municipalities]
+    .filter(Boolean)
+    .join(" / ");
 
-        const metaParts = [];
-        if (row.developer) metaParts.push(`*事業主:* ${row.developer}`);
-        if (row.layout) metaParts.push(`*間取り:* ${row.layout}`);
-        if (row.fileName) metaParts.push(`*ファイル:* ${row.fileName}`);
+  // 2行目：物件名
+  const propertyLine = row.propertyName || "(物件名未設定)";
 
-        const section = {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*${idx + 1}. ${title}*\n${metaParts.join("\n")}`,
-          },
-        };
+  // 3行目：事業主
+  const developerLine = row.developer
+    ? `事業主：${row.developer}`
+    : "";
 
-        // URL がある場合だけ「PDFを開く」ボタンを付ける
-        if (row.url) {
-          section.accessory = {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: "PDFを開く",
-            },
-            url: row.url,
-          };
-        }
+  // 4行目：ファイル名
+  const fileLine = row.fileName
+    ? `📄 ${row.fileName}`
+    : "";
 
-        blocks.push(section);
-        if (idx < top.length - 1) {
-          blocks.push({ type: "divider" });
-        }
-      });
+  const lines = [
+    locationLine,
+    `*${propertyLine}*`,
+    developerLine,
+    fileLine,
+  ].filter(Boolean);
+
+  const section = {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: lines.join("\n"),
+    },
+  };
+
+  // URL がある場合のみボタンを付ける
+  if (row.url) {
+    section.accessory = {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "PDFを開く",
+      },
+      url: row.url,
+    };
+  }
+
+  blocks.push(section);
+
+  if (idx < top.length - 1) {
+    blocks.push({ type: "divider" });
+  }
+});
+
 
       // ✅ 二重投稿防止：blocks 付きで1回だけ送る
       await postToSlack(event.channel, reply, blocks);

@@ -131,6 +131,9 @@ module.exports = async (req, res) => {
 
       console.log("FLYERS loaded:", FLYERS.length);
       console.log("FLYERS[0]:", FLYERS[0]);
+      console.log("DEBUG municipalities sample:", FLYERS.slice(0, 10).map(f => f.municipalities));
+console.log("DEBUG query text:", text);
+
 
       // 3) ユーザー発言を整形
       let text = (event.text || "").replace(/<@[^>]+>/g, "").trim();

@@ -362,43 +362,48 @@ function detectTags(text) {
 
 // -------------------- 全文検索（keyword + developer等） --------------------
 function searchFlyersByKeywords(text) {
-  const q = (text || "").toLowerCase();
+  const q = (text || "").toLowerCase().trim();
   if (!q) return [];
 
   return FLYERS.filter((row) => {
+    const muni = String(row.municipalities || "").toLowerCase();
+    const pref = String(row.prefectures || "").toLowerCase();
+    const dev  = String(row.developer || "").toLowerCase();
+    const prop = String(row.propertyName || "").toLowerCase();
+    const area = String(row.area || "").toLowerCase();
+    const file = String(row.fileName || "").toLowerCase();
+    const style = String(row.style || "").toLowerCase();
+    const target = String(row.target || "").toLowerCase();
+
     const keywords = Array.isArray(row.keywords) ? row.keywords : [];
+    const hitKeyword = keywords.some((kw) => {
+      const k = String(kw || "").toLowerCase();
+      return q.includes(k) || k.includes(q);
+    });
 
-    const hitKeyword = keywords.some((kw) =>
-      q.includes(String(kw).toLowerCase())
-    );
-
-    const hitDeveloper =
-      row.developer && q.includes(String(row.developer).toLowerCase());
-    const hitProperty =
-      row.propertyName && q.includes(String(row.propertyName).toLowerCase());
-    const hitArea = row.area && q.includes(String(row.area).toLowerCase());
-    // ★追加：都道府県 / 市区町村
-    const hitPref = row.prefectures && q.includes(String(row.prefectures).toLowerCase());
-    const hitMuni = row.municipalities && q.includes(String(row.municipalities).toLowerCase());
-    const hitFileName =
-      row.fileName && q.includes(String(row.fileName).toLowerCase());
-
-    // おまけ：style/target でもヒットさせたい場合
-    const hitStyle = row.style && q.includes(String(row.style).toLowerCase());
-    const hitTarget =
-      row.target && q.includes(String(row.target).toLowerCase());
+    const hitMuni = muni && (muni.includes(q) || q.includes(muni));
+    const hitPref = pref && (pref.includes(q) || q.includes(pref));
+    const hitDeveloper = dev && (dev.includes(q) || q.includes(dev));
+    const hitProperty = prop && (prop.includes(q) || q.includes(prop));
+    const hitArea = area && (area.includes(q) || q.includes(area));
+    const hitFileName = file && (file.includes(q) || q.includes(file));
+    const hitStyle = style && (style.includes(q) || q.includes(style));
+    const hitTarget = target && (target.includes(q) || q.includes(target));
 
     return (
-      hitKeyword ||
+      hitMuni ||
+      hitPref ||
       hitDeveloper ||
       hitProperty ||
       hitArea ||
       hitFileName ||
       hitStyle ||
-      hitTarget
+      hitTarget ||
+      hitKeyword
     );
   });
 }
+
 
 // どのキーワードがヒットしたか（表示用）※keyword列のみ
 function collectMatchedKeywords(text) {

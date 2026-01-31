@@ -208,53 +208,38 @@ function filterFlyersByTags(tags) {
 }
 
 /**
- * 全文検索（双方向の部分一致）
- * - 仙台市 -> municipalities
- * - 野村不動産 -> developer
- * - 物件名、都道府県、地域区分、ファイル名、style/target なども対象
+ * 全文検索（カンマ区切り = AND検索）
+ * 例: "セレクト,バナー" -> ["セレクト","バナー"] を両方満たす行だけ返す
+ * ※区切りは , と 、の両方に対応
  */
 function searchFlyersByKeywords(text) {
-  const q = (text || "").toLowerCase().trim();
-  if (!q) return [];
+  const queries = String(text || "")
+    .split(/[,、]/)                 // ← ここが重要（, と 、）
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (queries.length === 0) return [];
 
   return FLYERS.filter((row) => {
-    const dev = String(row.developer || "").toLowerCase();
-    const prop = String(row.propertyName || "").toLowerCase();
-    const area = String(row.area || "").toLowerCase();
-    const pref = String(row.prefectures || "").toLowerCase();
-    const muni = String(row.municipalities || "").toLowerCase();
-    const file = String(row.fileName || "").toLowerCase();
-    const style = String(row.style || "").toLowerCase();
-    const target = String(row.target || "").toLowerCase();
+    const fields = [
+      row.developer,
+      row.propertyName,
+      row.area,
+      row.prefectures,
+      row.municipalities,
+      row.fileName,
+      row.style,
+      row.target,
+      ...(Array.isArray(row.keywords) ? row.keywords : []),
+    ]
+      .map((v) => String(v || "").toLowerCase())
+      .filter(Boolean);
 
-    const keywords = Array.isArray(row.keywords) ? row.keywords : [];
-    const hitKeyword = keywords.some((kw) => {
-      const k = String(kw || "").toLowerCase();
-      return k.includes(q) || q.includes(k);
-    });
-
-    const hitDeveloper = dev && (dev.includes(q) || q.includes(dev));
-    const hitProperty = prop && (prop.includes(q) || q.includes(prop));
-    const hitArea = area && (area.includes(q) || q.includes(area));
-    const hitPref = pref && (pref.includes(q) || q.includes(pref));
-    const hitMuni = muni && (muni.includes(q) || q.includes(muni));
-    const hitFileName = file && (file.includes(q) || q.includes(file));
-    const hitStyle = style && (style.includes(q) || q.includes(style));
-    const hitTarget = target && (target.includes(q) || q.includes(target));
-
-    return (
-      hitKeyword ||
-      hitDeveloper ||
-      hitProperty ||
-      hitArea ||
-      hitPref ||
-      hitMuni ||
-      hitFileName ||
-      hitStyle ||
-      hitTarget
-    );
+    // AND条件：queries の全てが、どれかのフィールドに含まれる
+    return queries.every((q) => fields.some((f) => f.includes(q)));
   });
 }
+
 
 /**
  * Slack からの body を安全にパース

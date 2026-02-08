@@ -117,6 +117,19 @@ function searchRows(allRows, queryText) {
 
   return scored.map((x) => x.r);
 }
+function parseNextCommand(text) {
+  // 例: "さらに", "次", "next"
+  // 例: "さらに 横", "次 地図"
+  // 例: "次2 横", "さらに3 横"
+  const m = text.match(/^(さらに|次|next|もっと)\s*([0-9]+)?\s*(.*)$/i);
+  if (!m) return null;
+
+  const pageNum = m[2] ? parseInt(m[2], 10) : null; // 2,3...
+  const query = (m[3] || "").trim(); // 省略可
+
+  return { pageNum, query };
+}
+
 
 /** ====== 返信メッセージ整形 ====== */
 function formatResults(results, offset, total) {
@@ -187,21 +200,39 @@ export default async function handler(req, res) {
       event.source?.roomId ||
       "unknown";
 
-    const isNext = /^(さらに|次|next|もっと)$/i.test(text);
+    const nextCmd = parseNextCommand(text);
 
-    // 次ページ要求
-    if (isNext) {
-      const sess = SESSIONS.get(userKey);
-      if (!sess) {
-        await replyMessage(replyToken, [{ type: "text", text: "先に検索キーワードを送ってください。" }]);
-        continue;
-      }
-      sess.offset += PAGE_SIZE;
-      SESSIONS.set(userKey, sess);
+if (nextCmd) {
+  // 優先：メッセージに検索語が付いていればそれを使う（ステートレス）
+  // 付いてない場合は、セッションが残っていればそれを使う
+  const sess = SESSIONS.get(userKey);
 
-      await replyMessage(replyToken, formatResults(sess.results, sess.offset, sess.results.length));
-      continue;
-    }
+  const queryToUse = nextCmd.query || sess?.query;
+  if (!queryToUse) {
+    await replyMessage(replyToken, [{ type: "text", text: "続きを出すには「さらに 検索語」または「次2 検索語」のように送ってください。" }]);
+    continue;
+  }
+
+  const results = nextCmd.query ? searchRows(allRows, queryToUse) : sess.results;
+
+  // ページ番号が指定されている場合：そのページを表示（2ページ目=offset=PAGE_SIZE）
+  // 指定なしの場合：セッションがあれば次へ、なければ2ページ目
+  let offset;
+  if (nextCmd.pageNum) {
+    offset = (nextCmd.pageNum - 1) * PAGE_SIZE;
+  } else if (sess) {
+    offset = sess.offset + PAGE_SIZE;
+  } else {
+    offset = PAGE_SIZE;
+  }
+
+  // セッション更新（残っている場合は継続しやすくする）
+  SESSIONS.set(userKey, { query: queryToUse, results, offset });
+
+  await replyMessage(replyToken, formatResults(results, offset, results.length));
+  continue;
+}
+
 
     // 新規検索
     const results = searchRows(allRows, text);

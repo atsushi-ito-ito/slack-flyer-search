@@ -71,7 +71,7 @@ async function loadSheetRows() {
 
   const idx = (name) => headers.indexOf(name);
 
-  const iArea = idx("area"); // ★ 追加
+  const iArea = idx("area");
   const iProperty = idx("property_name");
   const iUrl = idx("url");
   const iKeyword = idx("keyword");
@@ -101,6 +101,7 @@ function normalize(v) {
     .toLowerCase();
 }
 
+/** ====== 検索（AND/OR対応） ====== */
 function searchRows(allRows, queryText) {
   const text = normalize(queryText);
   if (!text) return [];
@@ -108,22 +109,21 @@ function searchRows(allRows, queryText) {
   // OR検索かどうか判定（/ または |）
   const isOrSearch = text.includes("/") || text.includes("|");
 
-  // OR検索
+  // tokens（ORなら /| 区切り、ANDならスペース区切り）
   const tokens = isOrSearch
-    ? text.split(/[\/|]/).map((t) => t.trim()).filter(Boolean)
+    ? text
+        .split(/[\/|]/)
+        .map((t) => t.trim())
+        .filter(Boolean)
     : text.split(" ").filter(Boolean);
 
   if (tokens.length === 0) return [];
 
   const scored = allRows
     .map((r) => {
-      const hay = normalize([
-        r.area,
-        r.keyword,
-        r.property_name,
-        r.developer,
-        r.file_name,
-      ].join(" "));
+      const hay = normalize(
+        [r.area, r.keyword, r.property_name, r.developer, r.file_name].join(" ")
+      );
 
       let hitCount = 0;
 
@@ -143,7 +143,6 @@ function searchRows(allRows, queryText) {
   return scored.map((x) => x.r);
 }
 
-
 /** ====== 「さらに」「次」解析 ====== */
 function parseNextCommand(text) {
   const m = text.match(/^(さらに|次|next|もっと)\s*([0-9]+)?\s*(.*)$/i);
@@ -158,9 +157,7 @@ function parseNextCommand(text) {
 /** ====== 表示整形 ====== */
 function formatResults(results, offset, total) {
   const slice = results.slice(offset, offset + PAGE_SIZE);
-  if (slice.length === 0) {
-    return [{ type: "text", text: "これ以上ありません。" }];
-  }
+  if (slice.length === 0) return [{ type: "text", text: "これ以上ありません。" }];
 
   const lines = slice.map((r, i) => {
     const n = offset + i + 1;
@@ -182,6 +179,23 @@ function formatResults(results, offset, total) {
       : `\n\n以上です（全${total}件）`;
 
   return [{ type: "text", text: lines.join("\n\n") + footer }];
+}
+
+/** ====== ヘルプテキスト ====== */
+function buildHelpMessage() {
+  return (
+    "🔍 検索の使い方\n\n" +
+    "【AND検索（すべて含む）】\n" +
+    "・スペース区切りで入力\n" +
+    "例：dm 高級感\n\n" +
+    "【OR検索（どれか含む）】\n" +
+    "・「/」または「|」で区切る\n" +
+    "例：dm / 高級感\n\n" +
+    "【その他】\n" +
+    "・バナー / チラシ\n" +
+    "・野村不動産 高級感\n\n" +
+    "続きを見るときは「さらに」または「次」と送ってください。"
+  );
 }
 
 /** ====== メイン ====== */
@@ -220,29 +234,13 @@ export default async function handler(req, res) {
     if (event.message?.type !== "text") continue;
 
     const text = (event.message.text || "").trim();
-    // ===== 検索ヘルプ =====
-if (/^(使い方|ヘルプ|help)$/i.test(text)) {
-  await replyMessage(replyToken, [
-    {
-      type: "text",
-      text:
-        "🔍 検索の使い方\n\n" +
-        "【AND検索（すべて含む）】\n" +
-        "・スペース区切りで入力\n" +
-        "例：dm 高級感\n\n" +
-        "【OR検索（どれか含む）】\n" +
-        "・「/」または「|」で区切る\n" +
-        "例：dm / 高級感\n\n" +
-        "【その他】\n" +
-        "・バナー / チラシ\n" +
-        "・野村不動産 高級感\n\n" +
-        "続きを見るときは「さらに」または「次」と送ってください。",
-    },
-  ]);
-  continue;
-}
+    const replyToken = event.replyToken; // ★先に宣言（これが重要）
 
-    const replyToken = event.replyToken;
+    // ===== 検索ヘルプ =====
+    if (/^(使い方|ヘルプ|help)$/i.test(text)) {
+      await replyMessage(replyToken, [{ type: "text", text: buildHelpMessage() }]);
+      continue;
+    }
 
     const userKey =
       event.source?.userId ||
@@ -252,6 +250,7 @@ if (/^(使い方|ヘルプ|help)$/i.test(text)) {
 
     const nextCmd = parseNextCommand(text);
 
+    // 続き表示
     if (nextCmd) {
       const sess = SESSIONS.get(userKey);
       const queryToUse = nextCmd.query || sess?.query;
@@ -263,15 +262,13 @@ if (/^(使い方|ヘルプ|help)$/i.test(text)) {
         continue;
       }
 
-      const results = nextCmd.query
-        ? searchRows(allRows, queryToUse)
-        : sess.results;
+      const results = nextCmd.query ? searchRows(allRows, queryToUse) : sess?.results || [];
 
       let offset;
       if (nextCmd.pageNum) {
         offset = (nextCmd.pageNum - 1) * PAGE_SIZE;
       } else if (sess) {
-        offset = sess.offset + PAGE_SIZE;
+        offset = (sess.offset || 0) + PAGE_SIZE;
       } else {
         offset = PAGE_SIZE;
       }

@@ -221,19 +221,27 @@ function searchFlyersByKeywords(text) {
   if (queries.length === 0) return [];
 
   return FLYERS.filter((row) => {
-    const fields = [
-      row.developer,
-      row.propertyName,
-      row.area,
-      row.prefectures,
-      row.municipalities,
-      row.fileName,
-      row.style,
-      row.target,
-      ...(Array.isArray(row.keywords) ? row.keywords : []),
-    ]
-      .map((v) => String(v || "").toLowerCase())
-      .filter(Boolean);
+    const norm = (v) =>
+  String(v || "")
+    .replace(/\s+/g, " ")          // 連続スペース/改行を1つに
+    .replace(/　/g, " ")           // 全角スペースを半角へ
+    .trim()
+    .toLowerCase();
+
+const fields = [
+  row.developer,
+  row.propertyName,
+  row.area,                        // ←ここに「バナー」が入る想定
+  row.prefectures,
+  row.municipalities,
+  row.fileName,
+  row.style,
+  row.target,
+  ...(Array.isArray(row.keywords) ? row.keywords : []),
+]
+  .map(norm)
+  .filter(Boolean);
+
 
     // AND条件：queries の全てが、どれかのフィールドに含まれる
     return queries.every((q) => fields.some((f) => f.includes(q)));

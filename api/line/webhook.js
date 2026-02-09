@@ -3,12 +3,9 @@ import crypto from "crypto";
 import { google } from "googleapis";
 
 /** ====== 設定 ====== */
-const PAGE_SIZE = 3; // 1回に返す件数
+const PAGE_SIZE = 3;
 
-/** ====== メモリ（簡易セッション） ======
- * Vercelはサーバレスなので永続保証はありませんが、まずは動作確認用にメモリで保持します。
- * 本番はKV/DBに移すのがおすすめ（後で案内できます）
- */
+/** ====== 簡易セッション（Vercelメモリ） ====== */
 const SESSIONS = globalThis.__LINE_SESSIONS__ || new Map();
 globalThis.__LINE_SESSIONS__ = SESSIONS;
 
@@ -34,8 +31,7 @@ async function replyMessage(replyToken, messages) {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    console.error("LINE reply failed:", res.status, text);
+    console.error("LINE reply failed:", res.status, await res.text());
   }
 }
 
@@ -49,7 +45,9 @@ async function loadSheetRows() {
   const spreadsheetId = match[1];
 
   const sa = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || "{}");
-  if (!sa.client_email || !sa.private_key) throw new Error("GOOGLE_SERVICE_ACCOUNT is invalid");
+  if (!sa.client_email || !sa.private_key) {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT is invalid");
+  }
 
   const auth = new google.auth.JWT(
     sa.client_email,
@@ -60,7 +58,6 @@ async function loadSheetRows() {
 
   const sheets = google.sheets({ version: "v4", auth });
 
-  // 1枚目シートを想定。必要ならシート名指定に変更OK
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: "A:Z",
@@ -72,9 +69,9 @@ async function loadSheetRows() {
   const headers = values[0];
   const rows = values.slice(1);
 
-  // ヘッダー→ index
   const idx = (name) => headers.indexOf(name);
 
+  const iArea = idx("area"); // ★ 追加
   const iProperty = idx("property_name");
   const iUrl = idx("url");
   const iKeyword = idx("keyword");
@@ -84,6 +81,7 @@ async function loadSheetRows() {
 
   return rows
     .map((r) => ({
+      area: r[iArea] || "",
       property_name: r[iProperty] || "",
       url: r[iUrl] || "",
       keyword: r[iKeyword] || "",
@@ -91,24 +89,33 @@ async function loadSheetRows() {
       file_name: r[iFile] || "",
       developer: r[iDeveloper] || "",
     }))
-    .filter((r) => r.url); // urlがある行だけ
+    .filter((r) => r.url);
 }
 
-/** ====== 検索（複数キーワード対応） ====== */
-function searchRows(allRows, queryText) {
-  // スペース区切りを複数キーワードとして扱う
-  const tokens = queryText
+/** ====== 正規化 ====== */
+function normalize(v) {
+  return String(v || "")
+    .replace(/　/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
-    .split(/\s+/)
-    .map((t) => t.toLowerCase())
-    .filter(Boolean);
+    .toLowerCase();
+}
 
+/** ====== 検索（全文検索＋AND） ====== */
+function searchRows(allRows, queryText) {
+  const tokens = normalize(queryText).split(" ").filter(Boolean);
   if (tokens.length === 0) return [];
 
-  // 行のkeyword（J列）に tokens が全部含まれるものを優先
   const scored = allRows
     .map((r) => {
-      const hay = (r.keyword || "").toLowerCase();
+      const hay = normalize([
+        r.area,
+        r.keyword,
+        r.property_name,
+        r.developer,
+        r.file_name,
+      ].join(" "));
+
       const hitCount = tokens.filter((t) => hay.includes(t)).length;
       return { r, hitCount };
     })
@@ -117,29 +124,33 @@ function searchRows(allRows, queryText) {
 
   return scored.map((x) => x.r);
 }
+
+/** ====== 「さらに」「次」解析 ====== */
 function parseNextCommand(text) {
-  // 例: "さらに", "次", "next"
-  // 例: "さらに 横", "次 地図"
-  // 例: "次2 横", "さらに3 横"
   const m = text.match(/^(さらに|次|next|もっと)\s*([0-9]+)?\s*(.*)$/i);
   if (!m) return null;
 
-  const pageNum = m[2] ? parseInt(m[2], 10) : null; // 2,3...
-  const query = (m[3] || "").trim(); // 省略可
-
-  return { pageNum, query };
+  return {
+    pageNum: m[2] ? parseInt(m[2], 10) : null,
+    query: (m[3] || "").trim(),
+  };
 }
 
-
-/** ====== 返信メッセージ整形 ====== */
+/** ====== 表示整形 ====== */
 function formatResults(results, offset, total) {
   const slice = results.slice(offset, offset + PAGE_SIZE);
-  if (slice.length === 0) return [{ type: "text", text: "これ以上ありません。" }];
+  if (slice.length === 0) {
+    return [{ type: "text", text: "これ以上ありません。" }];
+  }
 
   const lines = slice.map((r, i) => {
     const n = offset + i + 1;
-    const title = r.property_name || "（物件名なし）";
-    const meta = [r.developer && `(${r.developer})`, r.file_name && `【${r.file_name}】`]
+    const title = r.property_name || "（名称未設定）";
+    const meta = [
+      r.area && `[${r.area}]`,
+      r.developer && `(${r.developer})`,
+      r.file_name && `【${r.file_name}】`,
+    ]
       .filter(Boolean)
       .join(" ");
     return `${n}. ${title} ${meta}\n${r.url}`;
@@ -167,21 +178,20 @@ export default async function handler(req, res) {
   const signature = req.headers["x-line-signature"];
   const secret = process.env.LINE_CHANNEL_SECRET;
   const hmac = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
-  const isValid = signature === hmac;
-  if (!isValid) return res.status(401).send("Invalid signature");
+  if (signature !== hmac) return res.status(401).send("Invalid signature");
 
   const body = JSON.parse(rawBody);
 
-  // 毎回読む（まず動く優先）。重い場合はキャッシュ化できます
   let allRows = [];
   try {
     allRows = await loadSheetRows();
   } catch (e) {
     console.error(e);
-    // LINEへエラー通知（replyTokenがある場合だけ）
-    const ev = (body.events || [])[0];
+    const ev = body.events?.[0];
     if (ev?.replyToken) {
-      await replyMessage(ev.replyToken, [{ type: "text", text: "シート読込に失敗しました。環境変数を確認してください。" }]);
+      await replyMessage(ev.replyToken, [
+        { type: "text", text: "シート読込に失敗しました。環境変数を確認してください。" },
+      ]);
     }
     return res.status(200).send("OK");
   }
@@ -193,7 +203,6 @@ export default async function handler(req, res) {
     const text = (event.message.text || "").trim();
     const replyToken = event.replyToken;
 
-    // ユーザーキー（グループ対応も考慮）
     const userKey =
       event.source?.userId ||
       event.source?.groupId ||
@@ -202,49 +211,45 @@ export default async function handler(req, res) {
 
     const nextCmd = parseNextCommand(text);
 
-if (nextCmd) {
-  // 優先：メッセージに検索語が付いていればそれを使う（ステートレス）
-  // 付いてない場合は、セッションが残っていればそれを使う
-  const sess = SESSIONS.get(userKey);
+    if (nextCmd) {
+      const sess = SESSIONS.get(userKey);
+      const queryToUse = nextCmd.query || sess?.query;
 
-  const queryToUse = nextCmd.query || sess?.query;
-  if (!queryToUse) {
-    await replyMessage(replyToken, [{ type: "text", text: "続きを出すには「さらに 検索語」または「次2 検索語」のように送ってください。" }]);
-    continue;
-  }
+      if (!queryToUse) {
+        await replyMessage(replyToken, [
+          { type: "text", text: "続きを出すには「さらに 検索語」と送ってください。" },
+        ]);
+        continue;
+      }
 
-  const results = nextCmd.query ? searchRows(allRows, queryToUse) : sess.results;
+      const results = nextCmd.query
+        ? searchRows(allRows, queryToUse)
+        : sess.results;
 
-  // ページ番号が指定されている場合：そのページを表示（2ページ目=offset=PAGE_SIZE）
-  // 指定なしの場合：セッションがあれば次へ、なければ2ページ目
-  let offset;
-  if (nextCmd.pageNum) {
-    offset = (nextCmd.pageNum - 1) * PAGE_SIZE;
-  } else if (sess) {
-    offset = sess.offset + PAGE_SIZE;
-  } else {
-    offset = PAGE_SIZE;
-  }
+      let offset;
+      if (nextCmd.pageNum) {
+        offset = (nextCmd.pageNum - 1) * PAGE_SIZE;
+      } else if (sess) {
+        offset = sess.offset + PAGE_SIZE;
+      } else {
+        offset = PAGE_SIZE;
+      }
 
-  // セッション更新（残っている場合は継続しやすくする）
-  SESSIONS.set(userKey, { query: queryToUse, results, offset });
-
-  await replyMessage(replyToken, formatResults(results, offset, results.length));
-  continue;
-}
-
-
-    // 新規検索
-    const results = searchRows(allRows, text);
-
-    if (results.length === 0) {
-      await replyMessage(replyToken, [{ type: "text", text: "該当なしでした。別のキーワードで試してください。" }]);
+      SESSIONS.set(userKey, { query: queryToUse, results, offset });
+      await replyMessage(replyToken, formatResults(results, offset, results.length));
       continue;
     }
 
-    // セッション保存
-    SESSIONS.set(userKey, { query: text, results, offset: 0 });
+    // 新規検索
+    const results = searchRows(allRows, text);
+    if (results.length === 0) {
+      await replyMessage(replyToken, [
+        { type: "text", text: "該当なしでした。別のキーワードで試してください。" },
+      ]);
+      continue;
+    }
 
+    SESSIONS.set(userKey, { query: text, results, offset: 0 });
     await replyMessage(replyToken, formatResults(results, 0, results.length));
   }
 

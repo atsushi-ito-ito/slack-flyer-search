@@ -101,9 +101,18 @@ function normalize(v) {
     .toLowerCase();
 }
 
-/** ====== 検索（全文検索＋AND） ====== */
 function searchRows(allRows, queryText) {
-  const tokens = normalize(queryText).split(" ").filter(Boolean);
+  const text = normalize(queryText);
+  if (!text) return [];
+
+  // OR検索かどうか判定（/ または |）
+  const isOrSearch = text.includes("/") || text.includes("|");
+
+  // OR検索
+  const tokens = isOrSearch
+    ? text.split(/[\/|]/).map((t) => t.trim()).filter(Boolean)
+    : text.split(" ").filter(Boolean);
+
   if (tokens.length === 0) return [];
 
   const scored = allRows
@@ -116,7 +125,16 @@ function searchRows(allRows, queryText) {
         r.file_name,
       ].join(" "));
 
-      const hitCount = tokens.filter((t) => hay.includes(t)).length;
+      let hitCount = 0;
+
+      if (isOrSearch) {
+        // OR：どれか1つでも含まれればOK
+        hitCount = tokens.some((t) => hay.includes(t)) ? 1 : 0;
+      } else {
+        // AND：すべて含まれている必要あり
+        hitCount = tokens.every((t) => hay.includes(t)) ? tokens.length : 0;
+      }
+
       return { r, hitCount };
     })
     .filter((x) => x.hitCount > 0)
@@ -124,6 +142,7 @@ function searchRows(allRows, queryText) {
 
   return scored.map((x) => x.r);
 }
+
 
 /** ====== 「さらに」「次」解析 ====== */
 function parseNextCommand(text) {
@@ -201,6 +220,28 @@ export default async function handler(req, res) {
     if (event.message?.type !== "text") continue;
 
     const text = (event.message.text || "").trim();
+    // ===== 検索ヘルプ =====
+if (/^(使い方|ヘルプ|help)$/i.test(text)) {
+  await replyMessage(replyToken, [
+    {
+      type: "text",
+      text:
+        "🔍 検索の使い方\n\n" +
+        "【AND検索（すべて含む）】\n" +
+        "・スペース区切りで入力\n" +
+        "例：dm 高級感\n\n" +
+        "【OR検索（どれか含む）】\n" +
+        "・「/」または「|」で区切る\n" +
+        "例：dm / 高級感\n\n" +
+        "【その他】\n" +
+        "・バナー / チラシ\n" +
+        "・野村不動産 高級感\n\n" +
+        "続きを見るときは「さらに」または「次」と送ってください。",
+    },
+  ]);
+  continue;
+}
+
     const replyToken = event.replyToken;
 
     const userKey =

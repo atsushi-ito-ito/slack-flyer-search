@@ -66,12 +66,15 @@ async function loadSheetRows() {
   const values = resp.data.values || [];
   if (values.length < 2) return [];
 
-  const headers = values[0];
+  // ヘッダー名の表記ゆれに強くする（前後空白を削除）
+  const headers = (values[0] || []).map((h) => String(h || "").trim());
   const rows = values.slice(1);
 
   const idx = (name) => headers.indexOf(name);
 
   const iArea = idx("area");
+  const iPrefectures = idx("prefectures");       // ★追加
+  const iMunicipalities = idx("municipalities"); // ★追加
   const iProperty = idx("property_name");
   const iUrl = idx("url");
   const iKeyword = idx("keyword");
@@ -81,13 +84,15 @@ async function loadSheetRows() {
 
   return rows
     .map((r) => ({
-      area: r[iArea] || "",
-      property_name: r[iProperty] || "",
-      url: r[iUrl] || "",
-      keyword: r[iKeyword] || "",
-      updated: r[iUpdated] || "",
-      file_name: r[iFile] || "",
-      developer: r[iDeveloper] || "",
+      area: iArea >= 0 ? r[iArea] || "" : "",
+      prefectures: iPrefectures >= 0 ? r[iPrefectures] || "" : "",         // ★追加
+      municipalities: iMunicipalities >= 0 ? r[iMunicipalities] || "" : "", // ★追加
+      property_name: iProperty >= 0 ? r[iProperty] || "" : "",
+      url: iUrl >= 0 ? r[iUrl] || "" : "",
+      keyword: iKeyword >= 0 ? r[iKeyword] || "" : "",
+      updated: iUpdated >= 0 ? r[iUpdated] || "" : "",
+      file_name: iFile >= 0 ? r[iFile] || "" : "",
+      developer: iDeveloper >= 0 ? r[iDeveloper] || "" : "",
     }))
     .filter((r) => r.url);
 }
@@ -121,8 +126,17 @@ function searchRows(allRows, queryText) {
 
   const scored = allRows
     .map((r) => {
+      // ★prefectures / municipalities を検索対象へ追加
       const hay = normalize(
-        [r.area, r.keyword, r.property_name, r.developer, r.file_name].join(" ")
+        [
+          r.area,
+          r.prefectures,
+          r.municipalities,
+          r.keyword,
+          r.property_name,
+          r.developer,
+          r.file_name,
+        ].join(" ")
       );
 
       let hitCount = 0;
@@ -162,13 +176,18 @@ function formatResults(results, offset, total) {
   const lines = slice.map((r, i) => {
     const n = offset + i + 1;
     const title = r.property_name || "（名称未設定）";
+
+    // 表示用メタ情報（必要なら prefectures / municipalities も出せます）
     const meta = [
       r.area && `[${r.area}]`,
+      r.prefectures && `【${r.prefectures}】`,
+      r.municipalities && `【${r.municipalities}】`,
       r.developer && `(${r.developer})`,
       r.file_name && `【${r.file_name}】`,
     ]
       .filter(Boolean)
       .join(" ");
+
     return `${n}. ${title} ${meta}\n${r.url}`;
   });
 
@@ -187,16 +206,12 @@ function buildHelpMessage() {
     "🔍 検索の使い方\n\n" +
     "【AND検索（すべて含む）】\n" +
     "・スペース区切りで入力\n" +
-    "例：dm 高級感\n\n" +
+    "例：福岡県 中央区 高級感\n\n" +
     "【OR検索（どれか含む）】\n" +
     "・「/」または「|」で区切る\n" +
-    "例：dm / 高級感\n\n" +
-    "【その他検索】\n" +
-    "・種類（バナーやポップアップ、チラシ、パンフなど） 縦、横\n" +
-    "・形式（縦、横）\n" +
-    "・雰囲気(高級感、ポップなど)\n" +
-    "・内容(パース、設備、周辺環境など)\n" +
-　　 "・デベロッパー検索(関電不動産開発など)\n" +
+    "例：福岡県 / 札幌市\n\n" +
+    "【検索対象】\n" +
+    "・area / prefectures / municipalities / 物件名 / keyword / developer / file_name\n\n" +
     "「思うようにヒットしない」「URLが切れている」など不具合がありましたら販売促進課まで連絡ください。\n\n" +
     "続きを見るときは「さらに」または「次」と送ってください。"
   );
@@ -238,7 +253,7 @@ export default async function handler(req, res) {
     if (event.message?.type !== "text") continue;
 
     const text = (event.message.text || "").trim();
-    const replyToken = event.replyToken; // ★先に宣言（これが重要）
+    const replyToken = event.replyToken;
 
     // ===== 検索ヘルプ =====
     if (/^(使い方|ヘルプ|help)$/i.test(text)) {

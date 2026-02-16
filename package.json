@@ -3,9 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "node api/slack.js"
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "slack": "node api/slack.js"
   },
   "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "@napi-rs/canvas": "^0.1.90",
     "@slack/web-api": "^7.13.0",
     "@vercel/blob": "^2.2.0",

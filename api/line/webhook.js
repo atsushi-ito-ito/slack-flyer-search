@@ -1,6 +1,6 @@
 // api/line/webhook.js
 import crypto from "crypto";
-import { google } from "googleapis";
+import { searchFlyers } from "../../lib/flyerEngine.js";
 
 /** ====== 設定 ====== */
 const PAGE_SIZE = 3;
@@ -35,126 +35,31 @@ async function replyMessage(replyToken, messages) {
   }
 }
 
-/** ====== Sheet読込 ====== */
-async function loadSheetRows() {
-  const sheetUrl = process.env.SHEET_URL;
-  if (!sheetUrl) throw new Error("SHEET_URL is not set");
-
-  const match = sheetUrl.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (!match) throw new Error("Invalid SHEET_URL");
-  const spreadsheetId = match[1];
-
-  const sa = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || "{}");
-  if (!sa.client_email || !sa.private_key) {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT is invalid");
-  }
-
-  const auth = new google.auth.JWT(
-    sa.client_email,
-    null,
-    sa.private_key.replace(/\\n/g, "\n"),
-    ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-  );
-
-  const sheets = google.sheets({ version: "v4", auth });
-
-  const resp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "A:Z",
-  });
-
-  const values = resp.data.values || [];
-  if (values.length < 2) return [];
-
-  // ヘッダー名の表記ゆれに強くする（前後空白を削除）
-  const headers = (values[0] || []).map((h) => String(h || "").trim());
-  const rows = values.slice(1);
-
-  const idx = (name) => headers.indexOf(name);
-
-  const iArea = idx("area");
-  const iPrefectures = idx("prefectures");       // ★追加
-  const iMunicipalities = idx("municipalities"); // ★追加
-  const iProperty = idx("property_name");
-  const iUrl = idx("url");
-  const iKeyword = idx("keyword");
-  const iUpdated = idx("updated");
-  const iFile = idx("file_name");
-  const iDeveloper = idx("developer");
-
-  return rows
-    .map((r) => ({
-      area: iArea >= 0 ? r[iArea] || "" : "",
-      prefectures: iPrefectures >= 0 ? r[iPrefectures] || "" : "",         // ★追加
-      municipalities: iMunicipalities >= 0 ? r[iMunicipalities] || "" : "", // ★追加
-      property_name: iProperty >= 0 ? r[iProperty] || "" : "",
-      url: iUrl >= 0 ? r[iUrl] || "" : "",
-      keyword: iKeyword >= 0 ? r[iKeyword] || "" : "",
-      updated: iUpdated >= 0 ? r[iUpdated] || "" : "",
-      file_name: iFile >= 0 ? r[iFile] || "" : "",
-      developer: iDeveloper >= 0 ? r[iDeveloper] || "" : "",
-    }))
-    .filter((r) => r.url);
-}
-
-/** ====== 正規化 ====== */
-function normalize(v) {
+/** ====== 正規化（軽め） ====== */
+function normalizeForTokens(v) {
   return String(v || "")
     .replace(/　/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+    .trim();
 }
 
-/** ====== 検索（AND/OR対応） ====== */
-function searchRows(allRows, queryText) {
-  const text = normalize(queryText);
-  if (!text) return [];
+/** ====== LINE入力 → mode/keywords に変換 ======
+ * - OR検索: "/" or "|"
+ * - AND検索: スペース区切り
+ */
+function parseQueryToModeKeywords(queryText) {
+  const text = normalizeForTokens(queryText);
+  if (!text) return { mode: "AND", keywords: [] };
 
-  // OR検索かどうか判定（/ または |）
-  const isOrSearch = text.includes("/") || text.includes("|");
-
-  // tokens（ORなら /| 区切り、ANDならスペース区切り）
-  const tokens = isOrSearch
+  const isOr = text.includes("/") || text.includes("|");
+  const tokens = isOr
     ? text
         .split(/[\/|]/)
         .map((t) => t.trim())
         .filter(Boolean)
-    : text.split(" ").filter(Boolean);
+    : text.split(" ").map((t) => t.trim()).filter(Boolean);
 
-  if (tokens.length === 0) return [];
-
-  const scored = allRows
-    .map((r) => {
-      // ★prefectures / municipalities を検索対象へ追加
-      const hay = normalize(
-        [
-          r.area,
-          r.prefectures,
-          r.municipalities,
-          r.keyword,
-          r.property_name,
-          r.developer,
-          r.file_name,
-        ].join(" ")
-      );
-
-      let hitCount = 0;
-
-      if (isOrSearch) {
-        // OR：どれか1つでも含まれればOK
-        hitCount = tokens.some((t) => hay.includes(t)) ? 1 : 0;
-      } else {
-        // AND：すべて含まれている必要あり
-        hitCount = tokens.every((t) => hay.includes(t)) ? tokens.length : 0;
-      }
-
-      return { r, hitCount };
-    })
-    .filter((x) => x.hitCount > 0)
-    .sort((a, b) => b.hitCount - a.hitCount);
-
-  return scored.map((x) => x.r);
+  return { mode: isOr ? "OR" : "AND", keywords: tokens };
 }
 
 /** ====== 「さらに」「次」解析 ====== */
@@ -168,34 +73,38 @@ function parseNextCommand(text) {
   };
 }
 
-/** ====== 表示整形 ====== */
-function formatResults(results, offset, total) {
-  const slice = results.slice(offset, offset + PAGE_SIZE);
-  if (slice.length === 0) return [{ type: "text", text: "これ以上ありません。" }];
+/** ====== 表示整形（ページング対応） ====== */
+function formatResults(items, page, totalCount) {
+  if (!items || items.length === 0) {
+    return [{ type: "text", text: "これ以上ありません。" }];
+  }
 
-  const lines = slice.map((r, i) => {
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const lines = items.map((r, i) => {
     const n = offset + i + 1;
-    const title = r.property_name || "（名称未設定）";
+    const title = r.title || "（名称未設定）";
 
-    // 表示用メタ情報（必要なら prefectures / municipalities も出せます）
     const meta = [
       r.area && `[${r.area}]`,
       r.prefectures && `【${r.prefectures}】`,
       r.municipalities && `【${r.municipalities}】`,
       r.developer && `(${r.developer})`,
-      r.file_name && `【${r.file_name}】`,
+      r.file_name && `【${r.file_name}】`, // flyerEngine側が返すなら表示（返さないなら空でOK）
     ]
       .filter(Boolean)
       .join(" ");
 
-    return `${n}. ${title} ${meta}\n${r.url}`;
+    return `${n}. ${title} ${meta}\n${r.url || ""}`.trim();
   });
 
-  const remain = total - (offset + slice.length);
+  const shown = offset + items.length;
+  const remain = Math.max(0, totalCount - shown);
+
   const footer =
     remain > 0
       ? `\n\n続きは「さらに」または「次」と送ってください（残り${remain}件）`
-      : `\n\n以上です（全${total}件）`;
+      : `\n\n以上です（全${totalCount}件）`;
 
   return [{ type: "text", text: lines.join("\n\n") + footer }];
 }
@@ -211,7 +120,7 @@ function buildHelpMessage() {
     "・「/」または「|」で区切る\n" +
     "例：福岡県 / 札幌市\n\n" +
     "【検索対象】\n" +
-    "・area / prefectures / municipalities / 物件名 / keyword / developer / file_name\n\n" +
+    "・area / prefectures / municipalities / 物件名 / keyword / developer / file_name（台帳にある範囲）\n\n" +
     "「思うようにヒットしない」「URLが切れている」など不具合がありましたら販売促進課まで連絡ください。\n\n" +
     "続きを見るときは「さらに」または「次」と送ってください。"
   );
@@ -234,20 +143,6 @@ export default async function handler(req, res) {
 
   const body = JSON.parse(rawBody);
 
-  let allRows = [];
-  try {
-    allRows = await loadSheetRows();
-  } catch (e) {
-    console.error(e);
-    const ev = body.events?.[0];
-    if (ev?.replyToken) {
-      await replyMessage(ev.replyToken, [
-        { type: "text", text: "シート読込に失敗しました。環境変数を確認してください。" },
-      ]);
-    }
-    return res.status(200).send("OK");
-  }
-
   for (const event of body.events || []) {
     if (event.type !== "message") continue;
     if (event.message?.type !== "text") continue;
@@ -269,7 +164,7 @@ export default async function handler(req, res) {
 
     const nextCmd = parseNextCommand(text);
 
-    // 続き表示
+    // ===== 続き表示 =====
     if (nextCmd) {
       const sess = SESSIONS.get(userKey);
       const queryToUse = nextCmd.query || sess?.query;
@@ -281,33 +176,64 @@ export default async function handler(req, res) {
         continue;
       }
 
-      const results = nextCmd.query ? searchRows(allRows, queryToUse) : sess?.results || [];
+      // 新しいqueryが来た場合は1ページ目から
+      const { mode, keywords } = parseQueryToModeKeywords(queryToUse);
 
-      let offset;
-      if (nextCmd.pageNum) {
-        offset = (nextCmd.pageNum - 1) * PAGE_SIZE;
-      } else if (sess) {
-        offset = (sess.offset || 0) + PAGE_SIZE;
-      } else {
-        offset = PAGE_SIZE;
+      let page;
+      if (nextCmd.pageNum) page = nextCmd.pageNum;
+      else page = (sess?.page || 1) + 1;
+
+      try {
+        const data = await searchFlyers({
+          mode,
+          keywords,
+          page,
+          pageSize: PAGE_SIZE,
+        });
+
+        // セッション更新（結果配列は持たず、queryとpageだけ）
+        SESSIONS.set(userKey, { query: queryToUse, mode, keywords, page });
+
+        await replyMessage(replyToken, formatResults(data.items, page, data.count));
+      } catch (e) {
+        console.error(e);
+        await replyMessage(replyToken, [
+          { type: "text", text: "検索に失敗しました。環境変数やシート設定を確認してください。" },
+        ]);
+      }
+      continue;
+    }
+
+    // ===== 新規検索 =====
+    const { mode, keywords } = parseQueryToModeKeywords(text);
+    if (!keywords.length) {
+      await replyMessage(replyToken, [{ type: "text", text: "検索キーワードを入力してください。" }]);
+      continue;
+    }
+
+    try {
+      const data = await searchFlyers({
+        mode,
+        keywords,
+        page: 1,
+        pageSize: PAGE_SIZE,
+      });
+
+      if (data.count === 0) {
+        await replyMessage(replyToken, [
+          { type: "text", text: "該当なしでした。別のキーワードで試してください。" },
+        ]);
+        continue;
       }
 
-      SESSIONS.set(userKey, { query: queryToUse, results, offset });
-      await replyMessage(replyToken, formatResults(results, offset, results.length));
-      continue;
-    }
-
-    // 新規検索
-    const results = searchRows(allRows, text);
-    if (results.length === 0) {
+      SESSIONS.set(userKey, { query: text, mode, keywords, page: 1 });
+      await replyMessage(replyToken, formatResults(data.items, 1, data.count));
+    } catch (e) {
+      console.error(e);
       await replyMessage(replyToken, [
-        { type: "text", text: "該当なしでした。別のキーワードで試してください。" },
+        { type: "text", text: "検索に失敗しました。環境変数やシート設定を確認してください。" },
       ]);
-      continue;
     }
-
-    SESSIONS.set(userKey, { query: text, results, offset: 0 });
-    await replyMessage(replyToken, formatResults(results, 0, results.length));
   }
 
   return res.status(200).send("OK");

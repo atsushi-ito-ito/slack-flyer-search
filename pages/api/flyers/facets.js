@@ -8,8 +8,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { mode = "AND", keywords = [] } = req.body || {};
-    const data = await getFacets({ mode, keywords });
+    const { mode = "AND", keywords = [], groups = null } = req.body || {};
+    const data = await getFacets({ mode, keywords, groups });
     return res.status(200).json(data);
   } catch (e) {
     console.error(e);

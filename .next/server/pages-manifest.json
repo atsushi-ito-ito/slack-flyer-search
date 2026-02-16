@@ -2,5 +2,7 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/flyers": "pages/flyers.js"
+  "/flyers": "pages/flyers.js",
+  "/api/flyers/facets": "pages/api/flyers/facets.js",
+  "/api/flyers/search": "pages/api/flyers/search.js"
 }

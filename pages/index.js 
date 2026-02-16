@@ -1,0 +1,9 @@
+// pages/index.js
+export default function Home() {
+  return (
+    <div style={{ padding: 40 }}>
+      <h1>Slack Flyer Search</h1>
+      <a href="/flyers">Go to Flyers</a>
+    </div>
+  );
+}

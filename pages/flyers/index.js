@@ -76,11 +76,6 @@ const FORMATS = [
 const SPECS = [
   { key: "縦", desc: "縦向きレイアウト" },
   { key: "横", desc: "横向きレイアウト" },
-  { key: "A4", desc: "A4サイズ" },
-  { key: "B3", desc: "B3サイズ" },
-  { key: "長A4", desc: "長A4" },
-  { key: "ハガキ", desc: "はがき" },
-  { key: "dm", desc: "DM" },
 ];
 
 /** =========================
@@ -154,7 +149,6 @@ const KEYWORDS = [
 
   // 雰囲気
   { key: "高級感", cat: "雰囲気", desc: "高級感" },
-  { key: "シック", cat: "雰囲気", desc: "シック" },
   { key: "黒", cat: "雰囲気", desc: "黒基調" },
   { key: "金", cat: "雰囲気", desc: "金（ゴールド）" },
   { key: "パステル", cat: "雰囲気", desc: "パステル" },

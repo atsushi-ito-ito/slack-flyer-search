@@ -6,7 +6,7 @@ import {
 
 const EXAMPLES = ["高級感のある来場促進DM 福岡", "大濠のDM", "価格改定のお知らせ", "特典つきキャンペーン", "完成後の即入居訴求"];
 const PAGE = 40;
-const BOARD_KEY = "flyerIndex.boards.v1";
+const BOARD_KEY = "flyerIndex.boards.v2";
 // 列と重複する古いタグは表示しない
 const DUP = new Set(["dm", "ｄｍ", "チラシ", "縦", "横", "リターンツール", "送付状", "ミニパンフ", "パンフ", "資料請求", "冊子", "ペラ"]);
 const showTags = (tags) => tags.filter((t) => !DUP.has(String(t).toLowerCase()));
@@ -22,8 +22,18 @@ function loadBoards() {
 function saveBoards(b) { try { localStorage.setItem(BOARD_KEY, JSON.stringify(b)); } catch (_) {} }
 
 /* ---------- 小さな部品 ---------- */
-function Thumb({ item, h }) {
+function Thumb({ item, h, fit }) {
   const t = toneOf(item);
+  const [broken, setBroken] = useState(false);
+  if (item.thumb && !broken) {
+    return (
+      <div className="thumb img" style={fit ? { maxHeight: h } : { height: h || undefined }}>
+        <img src={item.thumb} alt={`${item.name} ${item.file}`} loading="lazy" onError={() => setBroken(true)}
+          style={fit ? { maxHeight: h, width: "100%", objectFit: "contain" } : h ? { height: "100%", width: "100%", objectFit: "cover", objectPosition: "top" } : undefined} />
+        <span className="fmt on-img">{item.format || "—"}</span>
+      </div>
+    );
+  }
   const height = h || (item.orient === "縦" ? 280 : 180);
   return (
     <div className="thumb" style={{ height, background: t.bg, color: t.fg, border: t.border ? "1px solid var(--line)" : 0 }}>
@@ -265,7 +275,7 @@ export default function Home() {
                   <button className="link" onClick={() => { setStarted(true); setSort("new"); setChips([]); }}>すべて見る</button>
                 </div>
                 <div className="simgrid">
-                  {[...items].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 6).map((it) => (
+                  {[...items].sort((a, b) => b.row - a.row).slice(0, 6).map((it) => (
                     <Card key={it.id} item={it} onOpen={setOpen} compact />
                   ))}
                 </div>
@@ -389,12 +399,17 @@ function Detail({ item, items, onClose, onOpen, pinned, onPin, onTag }) {
           <div>
             <div className="muted" style={{ fontSize: 13 }}>{[item.area, item.pref, item.city].filter(Boolean).join(" › ")}</div>
             <h2 id="dt" className="mincho" style={{ margin: "4px 0 0", fontSize: 26, lineHeight: 1.4 }}>{item.name}</h2>
-            <div style={{ fontSize: 14 }}>{item.file}{item.developer ? ` ・ ${item.developer}` : ""}<span className="muted">　シート{item.id}行目</span></div>
+            <div style={{ fontSize: 14 }}>{item.file}{item.developer ? ` ・ ${item.developer}` : ""}<span className="muted">　シート{item.row}行目</span></div>
           </div>
           <button className="x" onClick={onClose} aria-label="閉じる">×</button>
         </div>
         <div className="dgrid">
-          <div className="dprev"><Thumb item={item} h={item.orient === "縦" ? 460 : 280} /></div>
+          <div className="dprev">
+            {item.thumb ? (
+              <a href={item.url || item.thumb} target="_blank" rel="noreferrer" title={item.url ? "PDFを開く" : "画像を開く"}><Thumb item={item} h={620} fit /></a>
+            ) : <Thumb item={item} h={item.orient === "縦" ? 460 : 280} />}
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>1ページ目</div>
+          </div>
           <div className="dinfo">
             <div className="btns">
               {item.url ? <a className="btn pri" href={item.url} target="_blank" rel="noreferrer">PDFを開く</a> : <span className="btn dis">共有リンク未登録</span>}

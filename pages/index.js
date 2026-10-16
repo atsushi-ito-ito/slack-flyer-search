@@ -24,11 +24,13 @@ function saveBoards(b) { try { localStorage.setItem(BOARD_KEY, JSON.stringify(b)
 /* ---------- 小さな部品 ---------- */
 function Thumb({ item, h, fit }) {
   const t = toneOf(item);
-  const [broken, setBroken] = useState(false);
+  const [tries, setTries] = useState(0); // 0=通常, 1=キャッシュ回避で再試行, 2=失敗
+  const broken = tries >= 2;
   if (item.thumb && !broken) {
+    const src = tries === 0 ? item.thumb : `${item.thumb}?r=${Date.now()}`;
     return (
       <div className="thumb img" style={fit ? { maxHeight: h } : { height: h || undefined }}>
-        <img src={item.thumb} alt={`${item.name} ${item.file}`} loading="lazy" onError={() => setBroken(true)}
+        <img src={src} alt={`${item.name} ${item.file}`} loading="lazy" onError={() => setTries((n) => n + 1)}
           style={fit ? { maxHeight: h, width: "100%", objectFit: "contain" } : h ? { height: "100%", width: "100%", objectFit: "cover", objectPosition: "top" } : undefined} />
         <span className="fmt on-img">{item.format || "—"}</span>
       </div>
@@ -42,6 +44,7 @@ function Thumb({ item, h, fit }) {
         <span className="vis">{item.orient}{item.visual ? `・${item.visual}` : ""}</span>
       </div>
       <div className="bars"><div style={{ width: "62%", background: t.fg }} /><div style={{ width: "38%", background: t.fg }} /></div>
+      {item.thumb && broken && <div className="thumb-err">画像を読み込めませんでした</div>}
     </div>
   );
 }

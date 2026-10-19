@@ -466,6 +466,29 @@ function BoardView({ boards, setBoards, byId, onOpen, goSearch }) {
     const text = `【${cur.name}】\n` + its.map(({ item, note }) => `・${item.name} ${item.file}${note ? `｜${note}` : ""}${item.url ? `\n  ${item.url}` : ""}`).join("\n");
     navigator.clipboard?.writeText(text).then(() => alert("一覧をコピーしました。チャットやメールに貼り付けて共有できます。"));
   };
+  const brief = cur.brief || {};
+  const setBrief = (k, v) => upd((b) => ({ ...b, brief: { ...(b.brief || {}), [k]: v } }));
+  const copyBrief = () => {
+    const lines = [
+      "他社販促物データベース（slack-flyer-search）の資料を参考に、DMの構成案とデザインのたたき台を作ってください。",
+      "",
+      "■ 作るDM",
+      `・物件の概要：${brief.property || "（未記入）"}`,
+      `・DMの目的：${brief.purpose || "（未記入）"}`,
+      `・判型：${brief.size || "（未記入）"}`,
+      `・トーン・その他の要望：${brief.memo || "（なし）"}`,
+      "",
+      `■ 参考にする資料（ボード「${cur.name}」${its.length}件）`,
+      ...its.map(({ item, note }, i) => `${i + 1}. ${item.name}（${item.pref}${item.city}）${item.file}｜シート${item.row}行目｜${item.format || "-"}・${item.orient || "-"}｜タグ：${item.tags.slice(0, 8).join("、")}${note ? `\n   参考にしたい点：${note}` : ""}`),
+      common.length ? `\n■ 共通するタグ：${common.map(([t, n]) => `${t}(${n})`).join("、")}` : "",
+      "",
+      "■ 進め方",
+      "1. 上の資料のPDFを読み、面ごとの構成・コピーの型・写真の使い方・特典と来場導線の見せ方を比較表にまとめる",
+      "2. 面ごとの台割と見出し・コピー案（2〜3案）を作る。どの資料のどこを手本にしたかも書く",
+      "3. デザインのたたき台をデザインのキャンバスで作る",
+    ].filter((l) => l !== undefined);
+    navigator.clipboard?.writeText(lines.join("\n")).then(() => alert("構成案の依頼文をコピーしました。Claudeのチャットに貼り付けて送ってください。"));
+  };
   return (
     <div className="bwrap">
       <nav className="blist" aria-label="ボード一覧">
@@ -510,6 +533,15 @@ function BoardView({ boards, setBoards, byId, onOpen, goSearch }) {
         <b>このボードの共通点</b>
         {common.length ? <ul>{common.map(([t, n]) => <li key={t}>{t}（{n}件）</li>)}</ul> : <span style={{ opacity: .8 }}>2件以上に共通するタグがここに出ます</span>}
         <button onClick={copyList} disabled={!its.length} style={{ marginTop: 6, border: 0, background: "#fff", color: "#15171B", borderRadius: 10, padding: "12px 0", fontWeight: 700 }}>一覧をコピーして共有</button>
+        <div className="brief">
+          <b>このボードからDM構成案を作る</b>
+          <label>物件の概要<textarea rows={2} value={brief.property || ""} onChange={(e) => setBrief("property", e.target.value)} placeholder="例：福岡市中央区・3LDK中心・6000万円台・全40戸" /></label>
+          <label>DMの目的<input value={brief.purpose || ""} onChange={(e) => setBrief("purpose", e.target.value)} placeholder="例：モデルルーム来場促進" /></label>
+          <label>判型<input value={brief.size || ""} onChange={(e) => setBrief("size", e.target.value)} placeholder="例：A4二つ折り／圧着はがき" /></label>
+          <label>トーン・その他<input value={brief.memo || ""} onChange={(e) => setBrief("memo", e.target.value)} placeholder="例：高級感、明朝体、写真主役" /></label>
+          <button onClick={copyBrief} disabled={!its.length}>構成案の依頼文をコピー</button>
+          <span style={{ fontSize: 12, opacity: .8 }}>コピーした文をClaudeのチャットに貼って送ると、構成案とデザインのたたき台を作ります。</span>
+        </div>
       </aside>
     </div>
   );

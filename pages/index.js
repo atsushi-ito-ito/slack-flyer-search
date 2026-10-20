@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  MOODS, COLORS, PURPOSES, PRICES, PRICE_LABEL, UNITS, UNIT_LABEL, KIND_LABEL,
+  MOODS, COLORS, PURPOSES, SEASONS, PRICES, PRICE_LABEL, UNITS, UNIT_LABEL, KIND_LABEL,
   parseQuery, filterItems, sortItems, facetCounts, similarItems, toneOf, chipKey,
 } from "../lib/search";
 
@@ -310,6 +310,7 @@ export default function Home() {
                 <Facet title="価格帯" kind="price" counts={facets.price} chips={chips} toggle={toggle} keys={PRICES} labels={PRICE_LABEL} />
                 <Facet title="総戸数" kind="units" counts={facets.units} chips={chips} toggle={toggle} keys={UNITS} labels={UNIT_LABEL} />
                 <Facet title="向き" kind="orient" counts={facets.orient} chips={chips} toggle={toggle} keys={["縦", "横"]} />
+                <Facet title="季節" kind="season" counts={facets.season} chips={chips} toggle={toggle} keys={SEASONS.map((x) => x.key)} />
                 <Facet title="エリア" kind="pref" counts={facets.pref} chips={chips} toggle={toggle} />
                 <fieldset>
                   <legend>雰囲気</legend>

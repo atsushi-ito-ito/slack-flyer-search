@@ -115,7 +115,7 @@ button.tag:hover{background:#D9D6CC}
 .panel .head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
 .x{border:1px solid var(--line2);background:var(--surface);border-radius:8px;width:40px;height:40px;font-size:18px}
 .dgrid{display:flex;gap:28px;flex-wrap:wrap}
-.dprev{flex:1 1 300px;max-width:380px}
+.dprev{flex:1 1 420px;max-width:560px;min-width:0}
 .dprev .thumb{height:auto}
 .dinfo{flex:1 1 360px;display:flex;flex-direction:column;gap:18px}
 .btns{display:flex;gap:10px;flex-wrap:wrap}
@@ -160,3 +160,17 @@ dl.attrs dt{font-size:12px;color:var(--muted)} dl.attrs dd{margin:0;font-weight:
 .brief input,.brief textarea{border:0;border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;color:#15171B;background:#fff}
 .brief button{border:0;background:#E9C46A;color:#15171B;border-radius:10px;padding:12px 0;font-weight:700;cursor:pointer}
 .brief button:disabled{opacity:.5;cursor:default}
+
+/* 詳細：ページ送り */
+.pager{display:flex;flex-direction:column;gap:10px}
+.pview{background:#E6E4DC;border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;justify-content:center;align-items:center;min-height:260px}
+.pview img{display:block;max-width:100%;max-height:640px;width:auto;height:auto}
+.pnav{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+.pnav button{border:1.5px solid var(--ink);background:var(--surface);border-radius:8px;padding:8px 14px;font-weight:700;font-size:14px;min-height:44px}
+.pnav button:disabled{opacity:.35;cursor:default}
+.pnav span{text-align:center;flex:1}
+.pstrip{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.pstrip button{flex:0 0 64px;border:2px solid transparent;border-radius:6px;padding:0;background:none;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted)}
+.pstrip button img{width:60px;height:60px;object-fit:cover;object-position:top;border-radius:4px;background:#E6E4DC}
+.pstrip button.on{border-color:var(--ink);color:var(--ink);font-weight:700}
+.side label.zero{opacity:.45}

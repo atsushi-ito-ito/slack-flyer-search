@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  MOODS, COLORS, PURPOSES, SEASONS, PRICES, PRICE_LABEL, UNITS, UNIT_LABEL, KIND_LABEL,
+  MOODS, COLORS, PURPOSES, SEASONS, SEASON_LABEL, DOCS, docKinds, PRICES, PRICE_LABEL, UNITS, UNIT_LABEL, KIND_LABEL,
   parseQuery, filterItems, sortItems, facetCounts, similarItems, toneOf, chipKey,
 } from "../lib/search";
 
-const EXAMPLES = ["高級感のある来場促進DM 福岡", "大濠のDM", "価格改定のお知らせ", "特典つきキャンペーン", "完成後の即入居訴求"];
+const EXAMPLES = [
+  "高級感のある来場促進DM 福岡", "大濠のDM", "新春のDM", "クリスマスの来場特典", "GWの来場促進",
+  "価格改定のお知らせ", "最終期の値引き", "完成後の即入居訴求", "事前案内会のご案内", "予告広告 横",
+  "特典つきキャンペーン", "抽選会 ノベルティ", "駅近 立地訴求のチラシ", "公園 周辺環境", "ZEH 省エネ",
+  "ミニパンフ 間取り", "8000万以上 高級感", "100戸以上の大規模", "月々支払例 縦", "ポップなチラシ",
+];
 const PAGE = 40;
 const BOARD_KEY = "flyerIndex.boards.v2";
 // 列と重複する古いタグは表示しない
@@ -32,7 +37,7 @@ function Thumb({ item, h, fit }) {
       <div className="thumb img" style={fit ? { maxHeight: h } : { height: h || undefined }}>
         <img src={src} alt={`${item.name} ${item.file}`} loading="lazy" onError={() => setTries((n) => n + 1)}
           style={fit ? { maxHeight: h, width: "100%", objectFit: "contain" } : h ? { height: "100%", width: "100%", objectFit: "cover", objectPosition: "top" } : undefined} />
-        <span className="fmt on-img">{item.format || "—"}</span>
+        <span className="fmt on-img">{docKinds(item)[0] || item.format || "—"}</span>
       </div>
     );
   }
@@ -40,7 +45,7 @@ function Thumb({ item, h, fit }) {
   return (
     <div className="thumb" style={{ height, background: t.bg, color: t.fg, border: t.border ? "1px solid var(--line)" : 0 }}>
       <div className="top">
-        <span className="fmt">{item.format || "—"}</span>
+        <span className="fmt">{docKinds(item)[0] || item.format || "—"}</span>
         <span className="vis">{item.orient}{item.visual ? `・${item.visual}` : ""}</span>
       </div>
       <div className="bars"><div style={{ width: "62%", background: t.fg }} /><div style={{ width: "38%", background: t.fg }} /></div>
@@ -75,16 +80,16 @@ function Card({ item, onOpen, pinned, onPin, onTag, compact }) {
   );
 }
 
-function Facet({ title, kind, keys, labels, counts, chips, toggle }) {
+function Facet({ title, kind, keys, labels, counts, chips, toggle, showAll }) {
   const sel = new Set(chips.filter((c) => c.kind === kind).map((c) => c.value));
-  const list = (keys || Object.keys(counts)).filter((k) => counts[k] || sel.has(k));
+  const list = (keys || Object.keys(counts)).filter((k) => showAll || counts[k] || sel.has(k));
   if (!list.length) return null;
   return (
     <fieldset>
       <legend>{title}</legend>
       {list.map((k) => (
-        <label key={k}>
-          <input type="checkbox" checked={sel.has(k)} onChange={() => toggle({ kind, value: k })} />
+        <label key={k} className={!counts[k] && !sel.has(k) ? "zero" : undefined}>
+          <input type="checkbox" checked={sel.has(k)} disabled={!counts[k] && !sel.has(k)} onChange={() => toggle({ kind, value: k })} />
           <span>{labels ? labels[k] || k : k}</span>
           <span className="n">{counts[k] || 0}</span>
         </label>
@@ -165,13 +170,9 @@ export default function Home() {
     if (!items || results.length < 12) return [];
     const out = [];
     const has = (k) => chips.some((c) => c.kind === k);
-    if (!has("format")) {
-      const [k, n] = Object.entries(facets.format).sort((a, b) => a[1] - b[1]).find(([, n]) => n >= 3) || [];
-      if (k && n < results.length) out.push({ chip: { kind: "format", value: k }, label: `${k}だけにする（${n}件）` });
-    }
-    if (!has("pref") && !has("city")) {
-      const [k, n] = Object.entries(facets.pref).sort((a, b) => b[1] - a[1])[0] || [];
-      if (k && n < results.length) out.push({ chip: { kind: "pref", value: k }, label: `${k}だけにする（${n}件）` });
+    if (!has("doc")) {
+      Object.entries(facets.doc).filter(([k, n]) => k !== "その他" && n >= 3 && n < results.length).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .forEach(([k, n]) => out.push({ chip: { kind: "doc", value: k }, label: `${k}だけにする（${n}件）` }));
     }
     return out;
   }, [items, results, facets, chips]);
@@ -321,12 +322,12 @@ export default function Home() {
 
             <div className="layout">
               <aside className="side" aria-label="絞り込み">
-                <Facet title="形式" kind="format" counts={facets.format} chips={chips} toggle={toggle} keys={["DM", "チラシ", "リターンツール"]} />
+                <Facet title="形式" kind="doc" counts={facets.doc} chips={chips} toggle={toggle} keys={DOCS.map((x) => x.key)} />
+                <Facet title="入手経路" kind="format" counts={facets.format} chips={chips} toggle={toggle} keys={["DM", "チラシ", "リターンツール"]} />
                 <Facet title="価格帯" kind="price" counts={facets.price} chips={chips} toggle={toggle} keys={PRICES} labels={PRICE_LABEL} />
                 <Facet title="総戸数" kind="units" counts={facets.units} chips={chips} toggle={toggle} keys={UNITS} labels={UNIT_LABEL} />
                 <Facet title="向き" kind="orient" counts={facets.orient} chips={chips} toggle={toggle} keys={["縦", "横"]} />
-                <Facet title="季節" kind="season" counts={facets.season} chips={chips} toggle={toggle} keys={SEASONS.map((x) => x.key)} />
-                <Facet title="エリア" kind="pref" counts={facets.pref} chips={chips} toggle={toggle} />
+                <Facet title="季節・節目" kind="season" counts={facets.season} chips={chips} toggle={toggle} keys={SEASONS.map((x) => x.key)} labels={SEASON_LABEL} showAll />
                 <fieldset>
                   <legend>雰囲気</legend>
                   {MOODS.map((m) => (
@@ -403,11 +404,47 @@ export default function Home() {
   );
 }
 
+function Pager({ item }) {
+  const n = item.pageCount || 0;
+  const [pg, setPg] = useState(1);
+  useEffect(() => { setPg(1); }, [item.id]);
+  if (!item.thumb) return <Thumb item={item} h={item.orient === "縦" ? 460 : 280} />;
+  if (n < 2) {
+    return (
+      <>
+        <a href={item.url || item.thumb} target="_blank" rel="noreferrer" title={item.url ? "PDFを開く" : "画像を開く"}><Thumb item={item} h={620} fit /></a>
+        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>1ページ（全{item.pageTotal || 1}ページ）</div>
+      </>
+    );
+  }
+  const src = (p) => `/pages/${item.pageKey}-${p}.webp`;
+  const go = (p) => setPg(Math.min(n, Math.max(1, p)));
+  return (
+    <div className="pager" onKeyDown={(e) => { if (e.key === "ArrowRight") go(pg + 1); if (e.key === "ArrowLeft") go(pg - 1); }}>
+      <div className="pview">
+        <a href={src(pg)} target="_blank" rel="noreferrer" title="大きな画像を開く"><img src={src(pg)} alt={`${item.name} ${item.file} ${pg}ページ目`} /></a>
+      </div>
+      <div className="pnav">
+        <button onClick={() => go(pg - 1)} disabled={pg === 1} aria-label="前のページ">‹ 前へ</button>
+        <span aria-live="polite">{pg} / {n}ページ{item.pageTotal > n ? `（全${item.pageTotal}ページ・${n + 1}ページ目以降はPDFで）` : ""}</span>
+        <button onClick={() => go(pg + 1)} disabled={pg === n} aria-label="次のページ">次へ ›</button>
+      </div>
+      <div className="pstrip" role="list">
+        {Array.from({ length: n }, (_, i) => i + 1).map((p) => (
+          <button key={p} role="listitem" className={p === pg ? "on" : undefined} onClick={() => go(p)} aria-label={`${p}ページ目`} aria-current={p === pg ? "true" : undefined}>
+            <img src={src(p)} alt="" loading="lazy" /><span>{p}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Detail({ item, items, onClose, onOpen, pinned, onPin, onTag }) {
   const sim = useMemo(() => similarItems(item, items, 6), [item, items]);
   const same = useMemo(() => items.filter((x) => x.name === item.name && x.id !== item.id), [item, items]);
   const A = [
-    ["形式（入手経路）", item.format], ["時期", item.stage], ["価格帯", PRICE_LABEL[item.price] || item.price], ["総戸数", UNIT_LABEL[item.units] || item.units],
+    ["形式", docKinds(item).join("・")], ["入手経路", item.format], ["時期", item.stage], ["価格帯", PRICE_LABEL[item.price] || item.price], ["総戸数", UNIT_LABEL[item.units] || item.units],
     ["向き", item.orient], ["間取り掲載", item.floor], ["価格表示", item.priceDisp], ["メイン画像", item.visual],
     ["冊子", item.booklet], ["特典", item.incentives], ["売主", item.developer], ["間取り", item.layout],
   ].filter(([, v]) => v);
@@ -424,10 +461,7 @@ function Detail({ item, items, onClose, onOpen, pinned, onPin, onTag }) {
         </div>
         <div className="dgrid">
           <div className="dprev">
-            {item.thumb ? (
-              <a href={item.url || item.thumb} target="_blank" rel="noreferrer" title={item.url ? "PDFを開く" : "画像を開く"}><Thumb item={item} h={620} fit /></a>
-            ) : <Thumb item={item} h={item.orient === "縦" ? 460 : 280} />}
-            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>1ページ目</div>
+            <Pager item={item} />
           </div>
           <div className="dinfo">
             <div className="btns">

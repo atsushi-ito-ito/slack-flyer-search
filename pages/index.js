@@ -323,7 +323,6 @@ export default function Home() {
             <div className="layout">
               <aside className="side" aria-label="絞り込み">
                 <Facet title="形式" kind="doc" counts={facets.doc} chips={chips} toggle={toggle} keys={DOCS.map((x) => x.key)} />
-                <Facet title="入手経路" kind="format" counts={facets.format} chips={chips} toggle={toggle} keys={["DM", "チラシ", "リターンツール"]} />
                 <Facet title="価格帯" kind="price" counts={facets.price} chips={chips} toggle={toggle} keys={PRICES} labels={PRICE_LABEL} />
                 <Facet title="総戸数" kind="units" counts={facets.units} chips={chips} toggle={toggle} keys={UNITS} labels={UNIT_LABEL} />
                 <Facet title="向き" kind="orient" counts={facets.orient} chips={chips} toggle={toggle} keys={["縦", "横"]} />

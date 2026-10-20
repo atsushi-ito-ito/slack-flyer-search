@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MOODS, COLORS, PURPOSES, SEASONS, PRICES, PRICE_LABEL, UNITS, UNIT_LABEL, KIND_LABEL,
   parseQuery, filterItems, sortItems, facetCounts, similarItems, toneOf, chipKey,
@@ -108,12 +108,26 @@ export default function Home() {
   const [open, setOpen] = useState(null);
   const [boards, setBoards] = useState(null);
   const inputRef = useRef(null);
+  const loadedAt = useRef(0);
+
+  // シートの最新内容を読み直す（開きっぱなしのタブでも古いタグが残らないように）
+  const reloadItems = useCallback((fresh) => {
+    return fetch(fresh ? `/api/items?t=${Date.now()}` : "/api/items", fresh ? { cache: "no-store" } : undefined)
+      .then((r) => r.json()).then((d) => {
+        if (d.error) throw new Error(d.error);
+        loadedAt.current = Date.now();
+        setItems(d.items);
+        return d.items;
+      });
+  }, []);
 
   useEffect(() => {
-    fetch("/api/items").then((r) => r.json()).then((d) => {
-      if (d.error) throw new Error(d.error);
-      setItems(d.items);
-    }).catch((e) => setError(String(e.message || e)));
+    reloadItems(false).catch((e) => setError(String(e.message || e)));
+    // タブに戻ってきたとき、前回の読み込みから2分以上たっていれば読み直す
+    const onVis = () => {
+      if (document.visibilityState === "visible" && Date.now() - loadedAt.current > 2 * 60 * 1000) reloadItems(true).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVis);
     setBoards(loadBoards());
     // URLから検索条件を復元
     const p = new URLSearchParams(location.search);
@@ -123,7 +137,8 @@ export default function Home() {
       setStarted(true);
     }
     if (p.get("q")) setQ(p.get("q"));
-  }, []);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [reloadItems]);
 
   useEffect(() => {
     if (!started) return;
@@ -377,7 +392,7 @@ export default function Home() {
         )}
 
         {view === "board" && boards && (
-          <BoardView boards={boards} setBoards={setBoards} byId={byId} onOpen={setOpen} goSearch={() => setView("search")} />
+          <BoardView boards={boards} setBoards={setBoards} byId={byId} reload={() => reloadItems(true)} onOpen={setOpen} goSearch={() => setView("search")} />
         )}
       </main>
 
@@ -443,7 +458,13 @@ function Detail({ item, items, onClose, onOpen, pinned, onPin, onTag }) {
   );
 }
 
-function BoardView({ boards, setBoards, byId, onOpen, goSearch }) {
+function commonTags(list) {
+  const m = {};
+  list.forEach(({ item }) => item.tags.forEach((t) => { m[t] = (m[t] || 0) + 1; }));
+  return Object.entries(m).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8);
+}
+
+function BoardView({ boards, setBoards, byId, reload, onOpen, goSearch }) {
   const cur = boards.boards.find((b) => b.id === boards.current) || boards.boards[0];
   const upd = (fn) => setBoards((B) => ({ ...B, boards: B.boards.map((b) => (b.id === cur.id ? fn(b) : b)) }));
   const add = () => {
@@ -458,18 +479,22 @@ function BoardView({ boards, setBoards, byId, onOpen, goSearch }) {
     setBoards((B) => { const rest = B.boards.filter((b) => b.id !== cur.id); return { boards: rest, current: rest[0].id }; });
   };
   const its = cur.items.map((x) => ({ ...x, item: byId[x.id] })).filter((x) => x.item);
-  const common = useMemo(() => {
-    const m = {};
-    its.forEach(({ item }) => item.tags.forEach((t) => { m[t] = (m[t] || 0) + 1; }));
-    return Object.entries(m).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  }, [its]);
+  const common = useMemo(() => commonTags(its), [its]);
   const copyList = () => {
     const text = `【${cur.name}】\n` + its.map(({ item, note }) => `・${item.name} ${item.file}${note ? `｜${note}` : ""}${item.url ? `\n  ${item.url}` : ""}`).join("\n");
     navigator.clipboard?.writeText(text).then(() => alert("一覧をコピーしました。チャットやメールに貼り付けて共有できます。"));
   };
   const brief = cur.brief || {};
   const setBrief = (k, v) => upd((b) => ({ ...b, brief: { ...(b.brief || {}), [k]: v } }));
-  const copyBrief = () => {
+  const copyBrief = async () => {
+    // コピーの直前にシートの最新内容を読み直し、今のタグで依頼文を作る
+    let its = cur.items.map((x) => ({ ...x, item: byId[x.id] })).filter((x) => x.item);
+    try {
+      const fresh = await reload();
+      const map = Object.fromEntries(fresh.map((i) => [i.id, i]));
+      its = cur.items.map((x) => ({ ...x, item: map[x.id] })).filter((x) => x.item);
+    } catch (_) { /* 読み直せなければ表示中の内容で作る */ }
+    const common = commonTags(its);
     const lines = [
       "他社販促物データベース（slack-flyer-search）の資料を参考に、DMの構成案とデザインのたたき台を作ってください。",
       "",
@@ -487,8 +512,19 @@ function BoardView({ boards, setBoards, byId, onOpen, goSearch }) {
       "1. 上の資料のPDFを読み、面ごとの構成・コピーの型・写真の使い方・特典と来場導線の見せ方を比較表にまとめる",
       "2. 面ごとの台割と見出し・コピー案（2〜3案）を作る。どの資料のどこを手本にしたかも書く",
       "3. デザインのたたき台をデザインのキャンバスで作る",
+      "",
+      "■ 仮置きのルール（物件の概要に書いていない情報）",
+      "・数字はすべて0で置く（例：徒歩0分、平置き駐車場000％、0,000万円〜、月々0万円台〜、第0期）",
+      "・電話番号は0120-000-000、面積は00.00㎡と書く",
+      "・物件名・駅名・特典内容などの文字は［物件名］のように［］で置く",
     ].filter((l) => l !== undefined);
-    navigator.clipboard?.writeText(lines.join("\n")).then(() => alert("構成案の依頼文をコピーしました。Claudeのチャットに貼り付けて送ってください。"));
+    const text = lines.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("構成案の依頼文をコピーしました（タグはシートの最新内容です）。Claudeのチャットに貼り付けて送ってください。");
+    } catch (_) {
+      prompt("自動でコピーできなかったので、下の文を全選択してコピーしてください。", text);
+    }
   };
   return (
     <div className="bwrap">

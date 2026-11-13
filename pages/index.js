@@ -554,7 +554,7 @@ function BoardView({ boards, setBoards, byId, reload, onOpen, goSearch }) {
       "",
       "■ 印刷物のルール",
       "・寸法はmm、文字の大きさはptで指定する。Illustrator用スクリプトは定規をmmにし、塗り足しを各辺3mm付ける",
-      "・DMの料金後納郵便のマーク：横向きのDMは右上に置く。縦横25mmの正方形で、四角の中心に横線を入れ、その下半分に「料金後納郵便」と書く（上半分は空ける）",
+      "・DMの料金後納郵便のマーク：横向きのDMは右上、縦向きのDMは左上に置く。縦横25mmの正方形で、四角の中心に横線を入れ、その下半分に「料金後納郵便」と書く（上半分は空ける）",
     ].filter((l) => l !== undefined);
     const text = lines.join("\n");
     try {
